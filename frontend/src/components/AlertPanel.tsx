@@ -37,7 +37,7 @@ export function AlertPanel({ alerts }: AlertPanelProps) {
                 {alert.baselineValueM3 !== null ? (
                   <span>Baseline: {formatVolume(alert.baselineValueM3)}</span>
                 ) : null}
-                {alert.ratio !== null ? <span>Ratio: {alert.ratio.toFixed(1)}x</span> : null}
+                {alert.ratio !== null ? <span>Ratio: {alert.ratio}x</span> : null}
               </div>
               <span className="alert__time">
                 {formatTimestamp(alert.startsAt)} to {formatTimestamp(alert.endsAt)}

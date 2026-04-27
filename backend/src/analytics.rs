@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use rust_decimal::prelude::ToPrimitive;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::models::{
@@ -33,14 +32,14 @@ impl Bucket {
 struct UsageInterval {
     start: OffsetDateTime,
     end: OffsetDateTime,
-    consumption_m3: f64,
-    raw_delta_m3: f64,
+    consumption_m3: i64,
+    raw_delta_m3: i64,
     negative_delta: bool,
 }
 
 #[derive(Debug, Default)]
 struct UsageAccumulator {
-    consumption_m3: f64,
+    consumption_m3: i64,
     reading_count: usize,
 }
 
@@ -61,14 +60,10 @@ pub fn build_dashboard(
     DashboardResponse {
         generated_at: now,
         summary: DashboardSummary {
-            today_m3: round_volume(sum_usage_between(&intervals, today_start, now)),
-            last_24h_m3: round_volume(sum_usage_between(
-                &intervals,
-                now - Duration::hours(24),
-                now,
-            )),
-            last_7d_m3: round_volume(sum_usage_between(&intervals, now - Duration::days(7), now)),
-            month_to_date_m3: round_volume(sum_usage_between(&intervals, month_start, now)),
+            today_m3: sum_usage_between(&intervals, today_start, now),
+            last_24h_m3: sum_usage_between(&intervals, now - Duration::hours(24), now),
+            last_7d_m3: sum_usage_between(&intervals, now - Duration::days(7), now),
+            month_to_date_m3: sum_usage_between(&intervals, month_start, now),
             active_alerts,
             anomaly_count: intervals
                 .iter()
@@ -117,11 +112,9 @@ pub fn build_consumption_series(
         points.push(UsagePoint {
             bucket_start,
             bucket_end,
-            consumption_m3: round_volume(
-                accumulator
-                    .map(|value| value.consumption_m3)
-                    .unwrap_or_default(),
-            ),
+            consumption_m3: accumulator
+                .map(|value| value.consumption_m3)
+                .unwrap_or_default(),
             reading_count: accumulator
                 .map(|value| value.reading_count)
                 .unwrap_or_default(),
@@ -152,7 +145,7 @@ pub fn build_alerts(
             kind: "negative_delta".to_owned(),
             severity: AlertSeverity::High,
             message: "The cumulative meter value moved backwards. Treat this reading as a reset or bad data.".to_owned(),
-            actual_value_m3: round_volume(interval.raw_delta_m3),
+            actual_value_m3: interval.raw_delta_m3,
             baseline_value_m3: None,
             ratio: None,
             starts_at: interval.start,
@@ -163,13 +156,13 @@ pub fn build_alerts(
     let hourly_from = from.max(now - Duration::days(4));
     let hourly =
         build_consumption_series(readings, Bucket::Hour, tz_offset_minutes, hourly_from, now);
-    if let Some(alert) = spike_alert("hourly_spike", "Hourly usage", &hourly, 24, 2.5, 0.20) {
+    if let Some(alert) = spike_alert("hourly_spike", "Hourly usage", &hourly, 24, 2.5, 1) {
         alerts.push(alert);
     }
 
     let daily_from = from.max(now - Duration::days(35));
     let daily = build_consumption_series(readings, Bucket::Day, tz_offset_minutes, daily_from, now);
-    if let Some(alert) = spike_alert("daily_spike", "Daily usage", &daily, 7, 1.8, 0.80) {
+    if let Some(alert) = spike_alert("daily_spike", "Daily usage", &daily, 7, 1.8, 1) {
         alerts.push(alert);
     }
 
@@ -191,19 +184,19 @@ fn derive_intervals(readings: &[DbReading]) -> Vec<UsageInterval> {
         .map(|pair| {
             let start = &pair[0];
             let end = &pair[1];
-            let delta = decimal_to_f64(end.meter_value_m3) - decimal_to_f64(start.meter_value_m3);
+            let delta = end.meter_value_m3 - start.meter_value_m3;
             UsageInterval {
                 start: start.recorded_at,
                 end: end.recorded_at,
-                consumption_m3: if delta.is_sign_negative() { 0.0 } else { delta },
+                consumption_m3: if delta.is_negative() { 0 } else { delta },
                 raw_delta_m3: delta,
-                negative_delta: delta.is_sign_negative(),
+                negative_delta: delta.is_negative(),
             }
         })
         .collect()
 }
 
-fn sum_usage_between(intervals: &[UsageInterval], from: OffsetDateTime, to: OffsetDateTime) -> f64 {
+fn sum_usage_between(intervals: &[UsageInterval], from: OffsetDateTime, to: OffsetDateTime) -> i64 {
     intervals
         .iter()
         .filter(|interval| !interval.negative_delta && interval.end > from && interval.end <= to)
@@ -217,7 +210,7 @@ fn spike_alert(
     points: &[UsagePoint],
     lookback: usize,
     ratio_threshold: f64,
-    minimum_actual: f64,
+    minimum_actual: i64,
 ) -> Option<AlertDto> {
     let latest = points.iter().rfind(|point| point.reading_count > 0)?;
     let previous: Vec<&UsagePoint> = points
@@ -234,7 +227,7 @@ fn spike_alert(
 
     let baseline = previous
         .iter()
-        .map(|point| point.consumption_m3)
+        .map(|point| point.consumption_m3 as f64)
         .sum::<f64>()
         / previous.len() as f64;
 
@@ -244,18 +237,20 @@ fn spike_alert(
             kind: kind.to_owned(),
             severity: AlertSeverity::High,
             message: format!("{label} jumped above a zero baseline."),
-            actual_value_m3: round_volume(latest.consumption_m3),
-            baseline_value_m3: Some(0.0),
+            actual_value_m3: latest.consumption_m3,
+            baseline_value_m3: Some(0),
             ratio: None,
             starts_at: latest.bucket_start,
             ends_at: latest.bucket_end,
         });
     }
 
-    let ratio = latest.consumption_m3 / baseline;
+    let ratio = latest.consumption_m3 as f64 / baseline;
     if ratio < ratio_threshold {
         return None;
     }
+
+    let rounded_ratio = round_to_i64(ratio);
 
     Some(AlertDto {
         id: format!("{kind}-{}", latest.bucket_start.unix_timestamp()),
@@ -265,10 +260,10 @@ fn spike_alert(
         } else {
             AlertSeverity::Medium
         },
-        message: format!("{label} is {ratio:.1}x above the recent baseline."),
-        actual_value_m3: round_volume(latest.consumption_m3),
-        baseline_value_m3: Some(round_volume(baseline)),
-        ratio: Some(round_volume(ratio)),
+        message: format!("{label} is {rounded_ratio}x above the recent baseline."),
+        actual_value_m3: latest.consumption_m3,
+        baseline_value_m3: Some(round_to_i64(baseline)),
+        ratio: Some(rounded_ratio),
         starts_at: latest.bucket_start,
         ends_at: latest.bucket_end,
     })
@@ -280,7 +275,7 @@ fn overnight_leak_alert(
     tz_offset_minutes: i32,
 ) -> Option<AlertDto> {
     let window_start = now - Duration::days(4);
-    let mut nightly_usage: BTreeMap<Date, f64> = BTreeMap::new();
+    let mut nightly_usage: BTreeMap<Date, i64> = BTreeMap::new();
 
     for interval in intervals.iter().filter(|interval| {
         !interval.negative_delta && interval.end >= window_start && interval.end <= now
@@ -291,7 +286,7 @@ fn overnight_leak_alert(
         }
     }
 
-    let recent_nights: Vec<(Date, f64)> = nightly_usage
+    let recent_nights: Vec<(Date, i64)> = nightly_usage
         .iter()
         .rev()
         .take(3)
@@ -302,9 +297,9 @@ fn overnight_leak_alert(
     }
 
     let average =
-        recent_nights.iter().map(|(_, total)| *total).sum::<f64>() / recent_nights.len() as f64;
-    let all_nonzero = recent_nights.iter().all(|(_, total)| *total >= 0.03);
-    if !all_nonzero || average < 0.05 {
+        recent_nights.iter().map(|(_, total)| *total as f64).sum::<f64>() / recent_nights.len() as f64;
+    let all_nonzero = recent_nights.iter().all(|(_, total)| *total >= 1);
+    if !all_nonzero || average < 1.0 {
         return None;
     }
 
@@ -324,9 +319,9 @@ fn overnight_leak_alert(
         message:
             "Repeated overnight flow suggests a possible leak or a fixture that never fully closes."
                 .to_owned(),
-        actual_value_m3: round_volume(average),
-        baseline_value_m3: Some(0.02),
-        ratio: Some(round_volume(average / 0.02)),
+        actual_value_m3: round_to_i64(average),
+        baseline_value_m3: Some(1),
+        ratio: Some(round_to_i64(average)),
         starts_at,
         ends_at,
     })
@@ -335,13 +330,9 @@ fn overnight_leak_alert(
 fn map_reading(reading: &DbReading) -> ReadingDto {
     ReadingDto {
         recorded_at: reading.recorded_at,
-        meter_value_m3: round_volume(decimal_to_f64(reading.meter_value_m3)),
+        meter_value_m3: reading.meter_value_m3,
         source: reading.source.clone(),
     }
-}
-
-fn decimal_to_f64(value: rust_decimal::Decimal) -> f64 {
-    value.to_f64().unwrap_or_default()
 }
 
 fn shift_to_local(timestamp: OffsetDateTime, tz_offset_minutes: i32) -> OffsetDateTime {
@@ -416,22 +407,20 @@ fn severity_rank(value: &AlertSeverity) -> u8 {
     }
 }
 
-fn round_volume(value: f64) -> f64 {
-    (value * 1000.0).round() / 1000.0
+fn round_to_i64(value: f64) -> i64 {
+    value.round() as i64
 }
 
 #[cfg(test)]
 mod tests {
-    use rust_decimal::Decimal;
-    use std::str::FromStr;
     use time::macros::datetime;
 
     use super::*;
 
-    fn reading(recorded_at: OffsetDateTime, meter_value_m3: &str) -> DbReading {
+    fn reading(recorded_at: OffsetDateTime, meter_value_m3: i64) -> DbReading {
         DbReading {
             recorded_at,
-            meter_value_m3: Decimal::from_str(meter_value_m3).expect("valid decimal"),
+            meter_value_m3,
             source: "test".to_owned(),
         }
     }
@@ -439,18 +428,18 @@ mod tests {
     #[test]
     fn dashboard_summary_uses_positive_deltas_only() {
         let readings = vec![
-            reading(datetime!(2026-04-01 00:00 UTC), "10.000"),
-            reading(datetime!(2026-04-01 06:00 UTC), "10.250"),
-            reading(datetime!(2026-04-01 12:00 UTC), "10.200"),
-            reading(datetime!(2026-04-01 18:00 UTC), "10.600"),
-            reading(datetime!(2026-04-02 01:00 UTC), "10.900"),
+            reading(datetime!(2026-04-01 00:00 UTC), 10),
+            reading(datetime!(2026-04-01 06:00 UTC), 12),
+            reading(datetime!(2026-04-01 12:00 UTC), 11),
+            reading(datetime!(2026-04-01 18:00 UTC), 15),
+            reading(datetime!(2026-04-02 01:00 UTC), 18),
         ];
 
         let summary = build_dashboard(&readings, datetime!(2026-04-02 03:00 UTC), 0, 2).summary;
 
-        assert_eq!(summary.today_m3, 0.3);
-        assert_eq!(summary.last_24h_m3, 0.95);
-        assert_eq!(summary.month_to_date_m3, 0.95);
+        assert_eq!(summary.today_m3, 3);
+        assert_eq!(summary.last_24h_m3, 9);
+        assert_eq!(summary.month_to_date_m3, 9);
         assert_eq!(summary.active_alerts, 2);
         assert_eq!(summary.anomaly_count, 1);
     }
@@ -458,10 +447,10 @@ mod tests {
     #[test]
     fn consumption_series_zero_fills_missing_buckets() {
         let readings = vec![
-            reading(datetime!(2026-04-10 00:00 UTC), "11.000"),
-            reading(datetime!(2026-04-10 01:00 UTC), "11.100"),
-            reading(datetime!(2026-04-10 02:00 UTC), "11.350"),
-            reading(datetime!(2026-04-10 04:00 UTC), "11.500"),
+            reading(datetime!(2026-04-10 00:00 UTC), 11),
+            reading(datetime!(2026-04-10 01:00 UTC), 12),
+            reading(datetime!(2026-04-10 02:00 UTC), 15),
+            reading(datetime!(2026-04-10 04:00 UTC), 17),
         ];
 
         let series = build_consumption_series(
@@ -472,17 +461,17 @@ mod tests {
             datetime!(2026-04-10 04:30 UTC),
         );
 
-        let consumption: Vec<f64> = series.iter().map(|point| point.consumption_m3).collect();
-        assert_eq!(consumption, vec![0.0, 0.1, 0.25, 0.0, 0.15]);
+        let consumption: Vec<i64> = series.iter().map(|point| point.consumption_m3).collect();
+        assert_eq!(consumption, vec![0, 1, 3, 0, 2]);
     }
 
     #[test]
     fn alerts_include_negative_delta_reset_signal() {
         let readings = vec![
-            reading(datetime!(2026-04-12 00:00 UTC), "20.000"),
-            reading(datetime!(2026-04-12 01:00 UTC), "20.200"),
-            reading(datetime!(2026-04-12 02:00 UTC), "19.950"),
-            reading(datetime!(2026-04-12 03:00 UTC), "20.050"),
+            reading(datetime!(2026-04-12 00:00 UTC), 20),
+            reading(datetime!(2026-04-12 01:00 UTC), 22),
+            reading(datetime!(2026-04-12 02:00 UTC), 19),
+            reading(datetime!(2026-04-12 03:00 UTC), 21),
         ];
 
         let alerts = build_alerts(

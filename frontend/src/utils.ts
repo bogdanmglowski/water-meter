@@ -56,7 +56,7 @@ export function buildRange(preset: RangePreset) {
 }
 
 export function formatVolume(value: number) {
-  return `${value.toFixed(3)} m³`;
+  return `${Math.round(value)} m³`;
 }
 
 function isValidDate(value: Date) {
@@ -163,6 +163,6 @@ export function rollingAverage(points: UsagePoint[], windowSize: number) {
   return points.map((point, index) => {
     const slice = points.slice(Math.max(0, index - windowSize + 1), index + 1);
     const total = slice.reduce((sum, item) => sum + item.consumptionM3, 0);
-    return total / slice.length;
+    return Math.round(total / slice.length);
   });
 }

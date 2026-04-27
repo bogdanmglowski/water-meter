@@ -1,7 +1,11 @@
+ALTER TABLE IF EXISTS meter_readings
+    ALTER COLUMN meter_value_m3 TYPE BIGINT
+    USING round(meter_value_m3::numeric)::bigint;
+
 CREATE TABLE IF NOT EXISTS meter_readings (
     id BIGSERIAL PRIMARY KEY,
     recorded_at TIMESTAMPTZ NOT NULL UNIQUE,
-    meter_value_m3 NUMERIC(12, 3) NOT NULL,
+    meter_value_m3 BIGINT NOT NULL,
     source TEXT NOT NULL DEFAULT 'seed',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -22,14 +26,14 @@ hourly_usage AS (
     SELECT
         recorded_at,
         CASE
-            WHEN extract(hour FROM recorded_at) BETWEEN 0 AND 4 THEN 0.008 + random() * 0.015
-            WHEN extract(hour FROM recorded_at) BETWEEN 6 AND 8 THEN 0.040 + random() * 0.065
-            WHEN extract(hour FROM recorded_at) BETWEEN 18 AND 22 THEN 0.055 + random() * 0.090
-            ELSE 0.015 + random() * 0.040
+            WHEN extract(hour FROM recorded_at) BETWEEN 0 AND 4 THEN floor(random() * 2)::int
+            WHEN extract(hour FROM recorded_at) BETWEEN 6 AND 8 THEN 1 + floor(random() * 3)::int
+            WHEN extract(hour FROM recorded_at) BETWEEN 18 AND 22 THEN 2 + floor(random() * 4)::int
+            ELSE floor(random() * 3)::int
         END
         + CASE
-            WHEN extract(dow FROM recorded_at) IN (0, 6) THEN 0.020
-            ELSE 0.000
+            WHEN extract(dow FROM recorded_at) IN (0, 6) THEN 1
+            ELSE 0
         END AS delta_m3
     FROM hours
 ),
@@ -37,11 +41,11 @@ with_spikes AS (
     SELECT
         recorded_at,
         CASE
-            WHEN recorded_at = date_trunc('hour', now() - interval '3 days') + interval '19 hours' THEN 0.900
-            WHEN recorded_at = date_trunc('hour', now() - interval '12 days') + interval '7 hours' THEN 0.550
+            WHEN recorded_at = date_trunc('hour', now() - interval '3 days') + interval '19 hours' THEN 12
+            WHEN recorded_at = date_trunc('hour', now() - interval '12 days') + interval '7 hours' THEN 8
             WHEN recorded_at BETWEEN date_trunc('day', now() - interval '2 days')
                  AND date_trunc('day', now() - interval '2 days') + interval '4 hours'
-                THEN 0.090 + random() * 0.030
+                THEN 4 + floor(random() * 2)::int
             ELSE delta_m3
         END AS delta_m3
     FROM hourly_usage
@@ -49,9 +53,9 @@ with_spikes AS (
 cumulative AS (
     SELECT
         recorded_at,
-        round(
-            (85432.000 + SUM(delta_m3) OVER (ORDER BY recorded_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))::numeric,
-            3
+        85432 + SUM(delta_m3) OVER (
+            ORDER BY recorded_at
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS meter_value_m3
     FROM with_spikes
 ),
@@ -60,7 +64,7 @@ with_reset AS (
         recorded_at,
         CASE
             WHEN recorded_at = date_trunc('hour', now() - interval '9 days') + interval '12 hours'
-                THEN meter_value_m3 - 0.450
+                THEN meter_value_m3 - 3
             ELSE meter_value_m3
         END AS meter_value_m3
     FROM cumulative

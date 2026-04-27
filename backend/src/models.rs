@@ -1,4 +1,3 @@
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use time::OffsetDateTime;
@@ -7,7 +6,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, FromRow)]
 pub struct DbReading {
     pub recorded_at: OffsetDateTime,
-    pub meter_value_m3: Decimal,
+    pub meter_value_m3: i64,
     pub source: String,
 }
 
@@ -26,7 +25,7 @@ pub struct ReadingDto {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub recorded_at: OffsetDateTime,
-    pub meter_value_m3: f64,
+    pub meter_value_m3: i64,
     pub source: String,
 }
 
@@ -39,7 +38,7 @@ pub struct UsagePoint {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub bucket_end: OffsetDateTime,
-    pub consumption_m3: f64,
+    pub consumption_m3: i64,
     pub reading_count: usize,
 }
 
@@ -58,9 +57,9 @@ pub struct AlertDto {
     pub kind: String,
     pub severity: AlertSeverity,
     pub message: String,
-    pub actual_value_m3: f64,
-    pub baseline_value_m3: Option<f64>,
-    pub ratio: Option<f64>,
+    pub actual_value_m3: i64,
+    pub baseline_value_m3: Option<i64>,
+    pub ratio: Option<i64>,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub starts_at: OffsetDateTime,
@@ -72,10 +71,10 @@ pub struct AlertDto {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardSummary {
-    pub today_m3: f64,
-    pub last_24h_m3: f64,
-    pub last_7d_m3: f64,
-    pub month_to_date_m3: f64,
+    pub today_m3: i64,
+    pub last_24h_m3: i64,
+    pub last_7d_m3: i64,
+    pub month_to_date_m3: i64,
     pub active_alerts: usize,
     pub anomaly_count: usize,
 }
@@ -132,16 +131,16 @@ mod tests {
         let response = DashboardResponse {
             generated_at: datetime!(2026-04-26 10:11:12 UTC),
             summary: DashboardSummary {
-                today_m3: 0.321,
-                last_24h_m3: 1.234,
-                last_7d_m3: 5.678,
-                month_to_date_m3: 9.101,
+                today_m3: 3,
+                last_24h_m3: 12,
+                last_7d_m3: 57,
+                month_to_date_m3: 91,
                 active_alerts: 2,
                 anomaly_count: 1,
             },
             latest_reading: Some(ReadingDto {
                 recorded_at: datetime!(2026-04-26 09:08:07 UTC),
-                meter_value_m3: 42.5,
+                meter_value_m3: 43,
                 source: "seed".to_owned(),
             }),
         };
@@ -149,7 +148,7 @@ mod tests {
         let point = UsagePoint {
             bucket_start: datetime!(2026-04-20 00:00 UTC),
             bucket_end: datetime!(2026-04-21 00:00 UTC),
-            consumption_m3: 0.456,
+            consumption_m3: 5,
             reading_count: 3,
         };
 
@@ -158,9 +157,9 @@ mod tests {
             kind: "hourly_spike".to_owned(),
             severity: AlertSeverity::High,
             message: "usage spiked".to_owned(),
-            actual_value_m3: 1.25,
-            baseline_value_m3: Some(0.5),
-            ratio: Some(2.5),
+            actual_value_m3: 7,
+            baseline_value_m3: Some(2),
+            ratio: Some(3),
             starts_at: datetime!(2026-04-25 22:00 UTC),
             ends_at: datetime!(2026-04-25 23:00 UTC),
         };

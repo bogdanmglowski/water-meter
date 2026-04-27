@@ -177,7 +177,7 @@ export default function App() {
         smooth: true,
         showSymbol: false,
         lineStyle: { width: 2, type: "dashed", color: "#7ea3c7" },
-        data: dailyBaseline.map((value) => Number(value.toFixed(3))),
+        data: dailyBaseline,
       },
     ],
   };
