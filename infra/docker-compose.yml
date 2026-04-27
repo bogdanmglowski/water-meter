@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17
+    container_name: water-meter-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-water_meter}
+      POSTGRES_USER: ${POSTGRES_USER:-meter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meter}
+    ports:
+      - "5432:5432"
+    volumes:
+      - water-meter-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-meter} -d ${POSTGRES_DB:-water_meter}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  water-meter-pg:
+

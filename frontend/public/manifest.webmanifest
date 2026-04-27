@@ -1,0 +1,11 @@
+{
+  "name": "Water Meter Dashboard",
+  "short_name": "Water Meter",
+  "description": "Water usage analytics and alert dashboard.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f3ea",
+  "theme_color": "#0f5d4a",
+  "icons": []
+}
+
