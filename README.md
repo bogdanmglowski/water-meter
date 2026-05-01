@@ -10,6 +10,7 @@ Browser-first water meter analytics for a single cumulative meter. An external p
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
 - [Build And Run](#build-and-run)
+- [Project Cleanup](#project-cleanup)
 - [Development Workflow](#development-workflow)
 - [API](#api)
 
@@ -19,7 +20,7 @@ This repository implements a read-only analytics app for one water meter.
 
 The data model assumes cumulative meter readings, not per-interval usage. The backend converts those cumulative values into interval consumption, aggregates the results into hourly, daily, weekly, and monthly views, and produces alert signals for suspicious behavior such as spikes, overnight flow, or reset-like negative deltas.
 
-The frontend is a responsive single-page dashboard intended to work well on desktop and phone. PostgreSQL runs separately in Docker, and a seed script is included so the app can be exercised without a real meter reader.
+The frontend is a responsive single-page dashboard intended to work well on desktop and phone. A single Docker Compose stack can build and run the full demo locally, and the same container stack is the recommended deployment model for a Linux host in a LAN.
 
 ## Repository Modules
 
@@ -64,11 +65,11 @@ Important files:
 
 ### `infra/`
 
-Infrastructure files for local database startup and test data.
+Infrastructure files for local Docker startup.
 
 Responsibilities:
-- define the local PostgreSQL container
-- declare database credentials and port mapping
+- define the local Docker Compose stack
+- run PostgreSQL, the backend API, and the frontend client together
 - provide the SQL seed used for test and demo data
 
 Important files:
@@ -81,7 +82,7 @@ Helper scripts for local development.
 
 Responsibilities:
 - execute one-off project tasks that are easier to run from a shell wrapper than from raw commands
-- currently includes database seeding against the running PostgreSQL container
+- currently includes demo data reseeding against the running PostgreSQL container
 
 Important files:
 - [scripts/seed-db.sh](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/scripts/seed-db.sh)
@@ -94,7 +95,7 @@ Important files:
 - baseline-vs-actual daily view
 - alerting for spikes, overnight leak suspicion, and negative deltas
 - raw readings table with range filtering
-- seed data generator for the last two months with noise and anomalies
+- seed data generator for two years of 10-minute readings
 - OpenAPI JSON output from the Rust backend
 
 ## Prerequisites
@@ -119,153 +120,178 @@ cp .env.example .env
 - `DATABASE_URL`: backend connection string
 - `APP_HOST`: backend bind host
 - `APP_PORT`: backend bind port
+- `CLIENT_HOST`: host name or LAN IP shown in container startup logs
+- `CLIENT_PORT`: published frontend port
 - `CLIENT_ORIGIN`: allowed frontend origin for backend CORS
 - `POSTGRES_DB`: database name used by Docker and seed script
 - `POSTGRES_USER`: database user
 - `POSTGRES_PASSWORD`: database password
+- `SEED_DEMO_DATA`: whether Docker startup should seed demo data into an empty database
 - `VITE_API_BASE_URL`: optional explicit frontend API base URL
 
 Default local behavior:
-- PostgreSQL listens on `localhost:5432`
-- backend listens on `http://localhost:8080`
-- frontend dev server listens on `http://localhost:5173`
+- Docker stack client: `http://localhost:5173`
+- Docker stack API via frontend proxy: `http://localhost:5173/api`
+- PostgreSQL stays on the internal Docker network in the ready-to-use stack
+- `VITE_API_BASE_URL` is only needed for manual frontend runs against a non-default API base
 
 ## Build And Run
 
-### 1. Start PostgreSQL
+### Ready-To-Use Stack
 
-Start the database container first. The backend depends on it.
-
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
-
-Check container status if needed:
+Start everything with one command:
 
 ```bash
-docker compose -f infra/docker-compose.yml ps
+cp .env.example .env
+docker compose -f infra/docker-compose.yml up --build -d
 ```
 
-Stop the database:
+Open the client in your browser:
+- `http://localhost:5173`
+
+Useful URLs:
+- client: `http://localhost:5173`
+- API health: `http://localhost:5173/api/health`
+- OpenAPI: `http://localhost:5173/api/openapi.json`
+
+Logs:
+
+```bash
+docker compose -f infra/docker-compose.yml logs -f
+```
+
+Notes:
+- frontend startup logs print the client and API URLs
+- the `seed` service loads demo data only when `SEED_DEMO_DATA=true` and `meter_readings` is empty
+
+Stop the stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml down
 ```
 
-### 2. Seed Test Data
+If the default frontend port is busy, override it when starting the stack:
 
-Load two months of hourly readings with random noise and several anomalies.
+```bash
+CLIENT_PORT=5174 docker compose -f infra/docker-compose.yml up --build -d
+```
 
-What the seed currently includes:
-- regular day and night usage variation
-- slightly heavier weekend usage
-- a few sharp spikes
-- several overnight-flow windows
-- one reset-like negative delta anomaly
+### Linux LAN Deployment
 
-Run the seed:
+Use this when the app should run continuously on another Linux machine in your network.
+
+1. Copy the repository to the target host, for example `/opt/water-meter`.
+2. Install Docker Engine with the Docker Compose plugin.
+3. Create a deployment env file:
+
+```bash
+cp .env.production.example .env.production
+```
+
+4. Edit `.env.production`:
+
+- set `CLIENT_HOST` to the server LAN IP or DNS name
+- set `CLIENT_URL`, `API_URL`, and `CLIENT_ORIGIN` to the same host
+- set a real `POSTGRES_PASSWORD`
+- keep `SEED_DEMO_DATA=false` unless this host should start with demo data
+
+5. Start the stack:
+
+```bash
+./scripts/deploy.sh up
+```
+
+Optional demo bootstrap:
+
+```bash
+./scripts/deploy.sh up --demo
+```
+
+Operational commands:
+
+```bash
+./scripts/deploy.sh logs
+./scripts/deploy.sh ps
+./scripts/deploy.sh restart
+./scripts/deploy.sh down
+```
+
+Deployment behavior:
+- the frontend is the only published service
+- `/api` is proxied internally to the Rust backend
+- PostgreSQL remains private to the Docker network
+- the backend is no longer published directly on a host port
+
+Optional autostart with `systemd`:
+
+```bash
+sudo cp infra/systemd/water-meter.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now water-meter.service
+```
+
+The provided service assumes the repository lives in `/opt/water-meter`. Adjust the `WorkingDirectory`, `ExecStart`, and `ExecStop` paths if you deploy it elsewhere.
+
+### Manual Development
+
+Use this only if `DATABASE_URL` points to a reachable PostgreSQL instance.
+
+Backend:
+
+```bash
+cd backend
+cargo check
+cargo test
+cargo run
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run build
+npm run dev
+```
+
+Manual frontend notes:
+- Vite proxies `/api` to `http://localhost:8080`
+- if `VITE_API_BASE_URL` is set, the frontend uses that explicit base URL
+
+Manual reseed:
 
 ```bash
 ./scripts/seed-db.sh
 ```
 
-This script:
-- reads `.env` if present
-- connects to the running `db` container
-- recreates the demo data in `meter_readings`
+This truncates and recreates `meter_readings` in the running Docker database.
 
-### 3. Build The Backend
+## Project Cleanup
 
-Compile the Rust API service:
+Clean build artifacts:
 
 ```bash
-cd backend
-cargo build
+./scripts/clean.sh
 ```
 
-Run backend tests:
+Clean build artifacts and frontend dependencies:
 
 ```bash
-cd backend
-cargo test
+./scripts/clean.sh --deps
 ```
 
-Notes:
-- migrations are executed automatically on startup
-- the backend expects PostgreSQL to be reachable through `DATABASE_URL`
-
-### 4. Run The Backend
-
-Start the API locally:
-
-```bash
-cd backend
-cargo run
-```
-
-When the backend is running, these URLs are relevant:
-- `http://localhost:8080/api/health`
-- `http://localhost:8080/api/openapi.json`
-
-### 5. Build The Frontend
-
-Install dependencies first:
-
-```bash
-cd frontend
-npm install
-```
-
-Create a production build:
-
-```bash
-cd frontend
-npm run build
-```
-
-The production bundle is written to:
-- [frontend/dist](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/dist)
-
-### 6. Run The Frontend
-
-For local development with live reload:
-
-```bash
-cd frontend
-npm run dev
-```
-
-For previewing the production build:
-
-```bash
-cd frontend
-npm run preview
-```
-
-Notes:
-- in dev mode, Vite proxies `/api` requests to `http://localhost:8080`
-- if `VITE_API_BASE_URL` is set, the frontend uses that explicit base URL
-
-### 7. Full Local Startup Order
-
-Use this order for a clean local run:
-
-1. `cp .env.example .env`
-2. `docker compose -f infra/docker-compose.yml up -d`
-3. `./scripts/seed-db.sh`
-4. `cd backend && cargo run`
-5. `cd frontend && npm install`
-6. `cd frontend && npm run dev`
+Cleanup scope:
+- default removes `backend/target` and `frontend/dist`
+- `--deps` additionally removes `frontend/node_modules`
 
 ## Development Workflow
 
 Recommended day-to-day workflow:
 
-1. Start PostgreSQL with Docker.
-2. Seed demo data if you need a known dataset.
-3. Run `cargo test` in `backend/` when changing analytics or API code.
-4. Run `npm run build` in `frontend/` when changing dashboard code.
-5. Use `cargo run` and `npm run dev` together for interactive local development.
+1. Use the Docker stack for the default ready-to-use setup.
+2. Run `cargo test` in `backend/` when changing analytics or API code.
+3. Run `npm run build` in `frontend/` when changing dashboard code.
+4. Use manual `cargo run` and `npm run dev` only when you need service-level iteration outside Docker.
 
 Validation commands that are useful during development:
 

@@ -1,14 +1,13 @@
+name: water-meter
+
 services:
   db:
     image: postgres:17
-    container_name: water-meter-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-water_meter}
       POSTGRES_USER: ${POSTGRES_USER:-meter}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meter}
-    ports:
-      - "5432:5432"
     volumes:
       - water-meter-pg:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +16,57 @@ services:
       timeout: 5s
       retries: 5
 
+  seed:
+    image: postgres:17
+    restart: "no"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-water_meter}
+      POSTGRES_USER: ${POSTGRES_USER:-meter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meter}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./db/seed.sql:/seed/seed.sql:ro
+      - ./seed-if-empty.sh:/seed/seed-if-empty.sh:ro
+    entrypoint: ["/bin/sh", "/seed/seed-if-empty.sh"]
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-meter}:${POSTGRES_PASSWORD:-meter}@db:5432/${POSTGRES_DB:-water_meter}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:${CLIENT_PORT:-5173}}
+      RUST_LOG: ${RUST_LOG:-info,tower_http=info}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      CLIENT_URL: ${CLIENT_URL:-http://${CLIENT_HOST:-localhost}:${CLIENT_PORT:-5173}}
+      API_URL: ${API_URL:-http://${CLIENT_HOST:-localhost}:${CLIENT_PORT:-5173}/api/health}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_PORT:-5173}:80"
+
 volumes:
   water-meter-pg:
-

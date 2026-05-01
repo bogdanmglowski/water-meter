@@ -1,0 +1,16 @@
+[Unit]
+Description=Water Meter Docker Compose stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/water-meter
+ExecStart=/opt/water-meter/scripts/deploy.sh up
+ExecStop=/opt/water-meter/scripts/deploy.sh down
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
