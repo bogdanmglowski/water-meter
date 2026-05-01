@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "clean": "rm -rf dist dist-bck",
+    "clean:all": "rm -rf dist dist-bck node_modules"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.3",
