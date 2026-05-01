@@ -231,11 +231,11 @@ Deployment behavior:
 - the backend is no longer published directly on a host port
 
 Reader profile notes:
-- `--reader` enables the compose profile that starts the OCR reader container alongside `db`, `backend`, and `frontend`
+- `--reader` enables the compose profile that starts the USB reader container alongside `db`, `backend`, and `frontend`
 - reader settings come from `.env.production`, using the `READER_*` variables shown in `.env.production.example`
-- for a USB camera, set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
-- for an IP camera, set `READER_SOURCE=ip`, set `READER_IP_CAMERA_URL`, and use `READER_VIDEO_DEVICE=/dev/null` to satisfy the static device mapping without exposing a real webcam
-- the reader container writes images and CSV artifacts into `reader/runtime/` on the host and writes successful OCR readings into PostgreSQL when `READER_PG_WRITE=true`
+- set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
+- the reader container is USB-only, always saves original frames, can export a cropped rectangle, and writes a fixed reading value of `1` into PostgreSQL when `READER_PG_WRITE=true`
+- the reader container writes images into `reader/runtime/` on the host
 
 Optional autostart with `systemd`:
 
