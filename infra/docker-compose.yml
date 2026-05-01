@@ -78,6 +78,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-water_meter}:${POSTGRES_PASSWORD:-water_meter}@db:5432/${POSTGRES_DB:-water_meter}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       READER_CAMERA_INDEX: ${READER_CAMERA_INDEX:-0}
       READER_INTERVAL_SECONDS: ${READER_INTERVAL_SECONDS:-5}
       READER_PICTURES_DIR: /data/pictures
@@ -94,6 +95,8 @@ services:
       - ../reader/runtime:/data
     devices:
       - "${READER_VIDEO_DEVICE:-/dev/video0}:${READER_VIDEO_DEVICE:-/dev/video0}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

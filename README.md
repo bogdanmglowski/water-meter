@@ -234,7 +234,11 @@ Reader profile notes:
 - `--reader` enables the compose profile that starts the USB reader container alongside `db`, `backend`, and `frontend`
 - reader settings come from `.env.production`, using the `READER_*` variables shown in `.env.production.example`
 - set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
-- the reader container is USB-only, always saves original frames, can export a cropped rectangle, and writes a fixed reading value of `1` into PostgreSQL when `READER_PG_WRITE=true`
+- the reader is USB-only, always saves original frames, always writes a crop file, and reads the meter value through the Ollama HTTP API with model `glm-ocr`
+- when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL
+- crop coordinates are required
+- the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`
+- host Ollama must listen on an address reachable from Docker
 - the reader container writes images into `reader/runtime/` on the host
 
 Optional autostart with `systemd`:

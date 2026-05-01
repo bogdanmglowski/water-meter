@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import os
+import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +29,9 @@ except ModuleNotFoundError as exc:
     _PSYCOPG_IMPORT_ERROR = exc
 else:
     _PSYCOPG_IMPORT_ERROR = None
+
+
+NUMERIC_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 class AppHelpFormatter(
@@ -54,20 +62,20 @@ class PostgresTarget:
 
 
 HELP_EPILOG = """Examples:
-  USB camera with the default webcam:
-    python3 app.py
-
   USB camera with crop coordinates:
     python3 app.py --camera-index 0 --x1 177 --y1 171 --x2 349 --y2 201
 
   USB camera with every 12th picture persisted:
-    python3 app.py --interval 1 --persist-every 12
+    python3 app.py --x1 177 --y1 171 --x2 349 --y2 201 --interval 1 --persist-every 12
 
   USB camera with a fixed latest-crop output file:
     python3 app.py --x1 159 --y1 331 --x2 565 --y2 414 --crop-output meter-crop.png
 
   USB camera with PostgreSQL writes enabled:
     python3 app.py --interval 5 --x1 159 --y1 331 --x2 565 --y2 414 --pg-write
+
+  Equivalent OCR request:
+    curl http://localhost:11434/api/generate -d '{"model":"glm-ocr","prompt":"Text Recognition:","images":["<base64-image>"],"stream":false}'
 """
 
 
@@ -106,6 +114,21 @@ def ensure_postgres_dependencies() -> None:
         )
     message += " To install it into the current interpreter, run `python3 -m pip install -r requirements.txt`."
     raise RuntimeError(message)
+
+
+def normalize_ocr_text(text: str) -> str | None:
+    if not text:
+        return None
+
+    match = NUMERIC_TOKEN_PATTERN.search(text)
+    if not match:
+        return None
+
+    return match.group(0).replace(",", ".")
+
+
+def get_ollama_base_url() -> str:
+    return os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 
 
 def normalize_postgres_timestamp(timestamp: datetime) -> datetime:
@@ -208,6 +231,45 @@ def write_crop_output(crop_output_path: Path, cropped: cv2.typing.MatLike) -> No
     write_image(crop_output_path, cropped)
 
 
+def run_ollama_ocr(crop_output_path: Path) -> int:
+    base_url = get_ollama_base_url()
+    image_base64 = base64.b64encode(crop_output_path.read_bytes()).decode("ascii")
+    payload = json.dumps(
+        {
+            "model": "glm-ocr",
+            "prompt": "Text Recognition:",
+            "images": [image_base64],
+            "stream": False,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Ollama OCR failed: {details or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Ollama API at {base_url}: {exc.reason}") from exc
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Ollama OCR returned invalid JSON") from exc
+
+    normalized = normalize_ocr_text(str(data.get("response", "")))
+    if normalized is None:
+        raise RuntimeError("No numeric meter reading found in Ollama OCR output")
+
+    return int(float(normalized))
+
+
 def capture_and_save_image(
     camera: cv2.VideoCapture,
     pictures_root: Path,
@@ -236,6 +298,7 @@ def run_capture_cycle(
     persist_image: bool = True,
     crop_output_path: Path | None = None,
     postgres_writer: PostgresWriter | None = None,
+    ocr_func=run_ollama_ocr,
 ) -> tuple[Path | None, int, datetime]:
     ensure_runtime_dependencies()
     ts = timestamp or datetime.now()
@@ -247,10 +310,10 @@ def run_capture_cycle(
         persist_image=persist_image,
     )
 
-    if crop_output_path is not None:
-        write_crop_output(crop_output_path, cropped)
+    effective_crop_output_path = crop_output_path or Path("meter-crop.png")
+    write_crop_output(effective_crop_output_path, cropped)
 
-    value = 1
+    value = ocr_func(effective_crop_output_path)
     if postgres_writer is not None:
         postgres_writer.persist(ts, value)
 
@@ -259,7 +322,7 @@ def run_capture_cycle(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Capture images from a USB camera, optionally crop a rectangle, and optionally store a fixed reading in PostgreSQL.",
+        description="Capture images from a USB camera, crop a rectangle, OCR it with Ollama, and optionally store the reading in PostgreSQL.",
         formatter_class=AppHelpFormatter,
         epilog=HELP_EPILOG,
     )
@@ -296,7 +359,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--crop-output",
         type=Path,
-        help="Also write the current cropped rectangle to this fixed file path on each capture cycle.",
+        default=Path("meter-crop.png"),
+        help="Fixed file path where the current cropped rectangle is written on each capture cycle.",
     )
 
     parser.add_argument("--x1", type=int, help="Left X coordinate of the crop rectangle.")
@@ -307,7 +371,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pg-write",
         action="store_true",
-        help="Insert a fixed reading value of 1 into the Water Meter PostgreSQL table `meter_readings`.",
+        help="Insert the meter reading recognized by Ollama OCR into the Water Meter PostgreSQL table `meter_readings`.",
     )
     parser.add_argument(
         "--pg-database-url",
@@ -338,8 +402,6 @@ def parse_crop_rect(args: argparse.Namespace, parser: argparse.ArgumentParser) -
 
 
 def parse_crop_output(args: argparse.Namespace, crop_rect: CropRect | None, parser: argparse.ArgumentParser) -> Path | None:
-    if args.crop_output is None:
-        return None
     if crop_rect is None:
         parser.error("--crop-output requires crop coordinates")
     return args.crop_output
@@ -372,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     crop_rect = parse_crop_rect(args, parser)
+    if crop_rect is None:
+        parser.error("Crop coordinates are required: provide --x1, --y1, --x2, and --y2")
     crop_output_path = parse_crop_output(args, crop_rect, parser)
     postgres_target = parse_postgres_target(args, parser)
 
@@ -408,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         "Starting capture loop "
         f"(source=usb(index={args.camera_index}), interval={args.interval_seconds}s, "
         f"pictures_dir={args.pictures_dir}, crop={crop_rect}, persist_every={args.persist_every}, "
-        f"crop_output={crop_output_path}, postgres={format_postgres_target(postgres_target)})"
+        f"crop_output={crop_output_path}, ocr=ollama(glm-ocr), postgres={format_postgres_target(postgres_target)})"
     )
 
     capture_count = 0

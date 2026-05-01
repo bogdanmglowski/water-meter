@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app
-from app import CropRect, PostgresTarget, PostgresWriter, build_arg_parser, crop_image, parse_crop_output, parse_crop_rect, parse_postgres_target, run_capture_cycle
+from app import CropRect, PostgresTarget, PostgresWriter, build_arg_parser, crop_image, normalize_ocr_text, parse_crop_output, parse_crop_rect, parse_postgres_target, run_capture_cycle, run_ollama_ocr
 
 
 class FakeCamera:
@@ -63,7 +63,7 @@ def test_postgres_writer_persists_upsert_query() -> None:
         )
     )
 
-    writer.persist(datetime(2026, 3, 16, 10, 20, 30), 1)
+    writer.persist(datetime(2026, 3, 16, 10, 20, 30), 12345)
 
     assert executed["database_url"] == "postgres://meter:meter@db:5432/water_meter"
     assert executed["autocommit"] is True
@@ -71,8 +71,88 @@ def test_postgres_writer_persists_upsert_query() -> None:
     assert "ON CONFLICT (recorded_at) DO UPDATE" in str(executed["query"])
     params = executed["params"]
     assert isinstance(params, tuple)
-    assert params[1:] == (1, "reader-test")
+    assert params[1:] == (12345, "reader-test")
     assert getattr(params[0], "tzinfo", None) is not None
+
+
+def test_normalize_ocr_text() -> None:
+    assert normalize_ocr_text("12345") == "12345"
+    assert normalize_ocr_text("current reading: 12,34 m3") == "12.34"
+    assert normalize_ocr_text("abc") is None
+
+
+def test_run_ollama_ocr_extracts_first_numeric_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    crop_path = tmp_path / "meter-crop.png"
+    crop_path.write_bytes(b"test")
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"response":"Meter value: 12345.67"}'
+
+    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+        assert timeout == 120
+        assert request.full_url == "http://127.0.0.1:11434/api/generate"
+        return FakeResponse()
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
+
+    assert run_ollama_ocr(crop_path) == 12345
+
+
+def test_run_ollama_ocr_reports_missing_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    crop_path = tmp_path / "meter-crop.png"
+    crop_path.write_bytes(b"test")
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"response":"no digits here"}'
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="No numeric meter reading"):
+        run_ollama_ocr(crop_path)
+
+
+def test_run_ollama_ocr_reports_http_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    crop_path = tmp_path / "meter-crop.png"
+    crop_path.write_bytes(b"test")
+
+    class FakeHttpError(app.urllib.error.HTTPError):
+        def read(self) -> bytes:
+            return b'model failed'
+
+    def fake_urlopen(*args, **kwargs):
+        raise FakeHttpError("http://127.0.0.1:11434/api/generate", 500, "boom", hdrs=None, fp=None)
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="model failed"):
+        run_ollama_ocr(crop_path)
+
+
+def test_run_ollama_ocr_reports_connection_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    crop_path = tmp_path / "meter-crop.png"
+    crop_path.write_bytes(b"test")
+
+    def fake_urlopen(*args, **kwargs):
+        raise app.urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="Could not reach Ollama API"):
+        run_ollama_ocr(crop_path)
 
 
 def test_run_capture_cycle_writes_original_image(tmp_path: Path) -> None:
@@ -87,9 +167,12 @@ def test_run_capture_cycle_writes_original_image(tmp_path: Path) -> None:
         camera,
         pictures_dir,
         timestamp=timestamp,
+        crop_rect=CropRect(10, 5, 20, 15),
+        crop_output_path=tmp_path / "meter-crop.png",
+        ocr_func=lambda path: 12345,
     )
 
-    assert value == 1
+    assert value == 12345
     assert ts == timestamp
     assert image_path == pictures_dir / "2026-03-16" / "2026-03-16_10-20-30.jpg"
     assert image_path.exists()
@@ -115,12 +198,15 @@ def test_run_capture_cycle_persists_to_postgres_writer(tmp_path: Path) -> None:
         camera,
         tmp_path / "pictures",
         timestamp=timestamp,
+        crop_rect=CropRect(1, 1, 10, 10),
+        crop_output_path=tmp_path / "meter-crop.png",
         postgres_writer=FakePostgresWriter(),
+        ocr_func=lambda path: 54321,
     )
 
-    assert value == 1
+    assert value == 54321
     assert ts == timestamp
-    assert calls == [(timestamp, 1)]
+    assert calls == [(timestamp, 54321)]
 
 
 def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
@@ -137,6 +223,7 @@ def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
         timestamp=timestamp,
         crop_rect=crop_rect,
         crop_output_path=crop_output,
+        ocr_func=lambda path: 123,
     )
 
     saved = cv2.imread(str(crop_output))
@@ -144,7 +231,34 @@ def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
     np.testing.assert_array_equal(saved, crop_image(frame, crop_rect))
 
 
-def test_run_capture_cycle_without_persistence_still_returns_fixed_value(tmp_path: Path) -> None:
+def test_run_capture_cycle_passes_written_crop_to_ocr(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    frame[4:16, 8:22] = (0, 0, 255)
+    camera = FakeCamera(frame)
+    crop_rect = CropRect(8, 4, 22, 16)
+    crop_output = tmp_path / "meter-crop.png"
+    captured: dict[str, object] = {}
+
+    def fake_ocr(path: Path) -> int:
+        captured["path"] = path
+        captured["bytes"] = path.read_bytes()
+        return 777
+
+    value = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        timestamp=datetime(2026, 3, 16, 10, 21, 0),
+        crop_rect=crop_rect,
+        crop_output_path=crop_output,
+        ocr_func=fake_ocr,
+    )[1]
+
+    assert value == 777
+    assert captured["path"] == crop_output
+    assert captured["bytes"] == crop_output.read_bytes()
+
+
+def test_run_capture_cycle_without_persistence_still_returns_ocr_value(tmp_path: Path) -> None:
     frame = np.zeros((20, 30, 3), dtype=np.uint8)
     camera = FakeCamera(frame)
     timestamp = datetime(2026, 3, 16, 10, 22, 0)
@@ -155,11 +269,14 @@ def test_run_capture_cycle_without_persistence_still_returns_fixed_value(tmp_pat
         camera,
         pictures_dir,
         timestamp=timestamp,
+        crop_rect=CropRect(1, 1, 10, 10),
+        crop_output_path=tmp_path / "meter-crop.png",
         persist_image=False,
+        ocr_func=lambda path: 9001,
     )
 
     assert image_path is None
-    assert value == 1
+    assert value == 9001
     assert ts == timestamp
     assert not pictures_dir.exists()
 
@@ -247,9 +364,9 @@ def test_parse_postgres_target_requires_database_url(monkeypatch: pytest.MonkeyP
 
 def test_parse_crop_output_defaults_to_disabled() -> None:
     parser = build_arg_parser()
-    args = parser.parse_args([])
+    args = parser.parse_args(["--x1", "1", "--y1", "2", "--x2", "8", "--y2", "9"])
 
-    assert parse_crop_output(args, None, parser) is None
+    assert parse_crop_output(args, CropRect(1, 2, 8, 9), parser) == Path("meter-crop.png")
 
 
 def test_parse_crop_output_requires_crop_rect() -> None:
@@ -270,7 +387,12 @@ def test_parse_crop_rect_rejects_partial_rectangle() -> None:
 
 def test_main_rejects_non_positive_persist_every() -> None:
     with pytest.raises(SystemExit):
-        app.main(["--persist-every", "0"])
+        app.main(["--x1", "1", "--y1", "2", "--x2", "8", "--y2", "9", "--persist-every", "0"])
+
+
+def test_main_requires_crop_coordinates() -> None:
+    with pytest.raises(SystemExit):
+        app.main([])
 
 
 def test_main_reports_missing_python_dependencies(
@@ -280,7 +402,7 @@ def test_main_reports_missing_python_dependencies(
     monkeypatch.setattr(app, "_CV2_IMPORT_ERROR", ModuleNotFoundError("No module named 'cv2'"))
     monkeypatch.setattr(app, "find_project_python", lambda: Path(".venv/bin/python"))
 
-    exit_code = app.main(["--interval", "3"])
+    exit_code = app.main(["--interval", "3", "--x1", "1", "--y1", "2", "--x2", "8", "--y2", "9"])
 
     assert exit_code == 1
     err = capsys.readouterr().err
@@ -297,6 +419,7 @@ def test_help_text_matches_usb_only_contract() -> None:
     assert "--crop-output CROP_OUTPUT" in help_text
     assert "--pg-write" in help_text
     assert "python3 app.py --camera-index 0" in help_text
+    assert "/api/generate" in help_text
     assert "IP camera" not in help_text
     assert "--source" not in help_text
     assert "--csv-file" not in help_text
@@ -335,7 +458,7 @@ def test_main_uses_usb_camera_and_logs_value(
         capture_calls["persist_image"] = persist_image
         capture_calls["crop_output_path"] = crop_output_path
         capture_calls["postgres_writer"] = postgres_writer
-        return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", 1, datetime(2026, 3, 30, 18, 0, 0)
+        return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", 12345, datetime(2026, 3, 30, 18, 0, 0)
 
     def stop_after_first_sleep(_seconds: float) -> None:
         raise KeyboardInterrupt
@@ -350,6 +473,14 @@ def test_main_uses_usb_camera_and_logs_value(
             "2",
             "--pictures-dir",
             str(tmp_path / "pictures"),
+            "--x1",
+            "1",
+            "--y1",
+            "2",
+            "--x2",
+            "8",
+            "--y2",
+            "9",
             "--interval",
             "1",
         ]
@@ -357,15 +488,15 @@ def test_main_uses_usb_camera_and_logs_value(
 
     assert exit_code == 0
     assert capture_calls["camera_index"] == 2
-    assert capture_calls["crop_rect"] is None
-    assert capture_calls["crop_output_path"] is None
+    assert capture_calls["crop_rect"] == CropRect(1, 2, 8, 9)
+    assert capture_calls["crop_output_path"] == Path("meter-crop.png")
     assert capture_calls["postgres_writer"] is None
     assert capture_calls["persist_image"] is True
     assert capture_calls["released"] is True
 
     out = capsys.readouterr().out
     assert "source=usb(index=2)" in out
-    assert "value=1" in out
+    assert "value=12345" in out
 
 
 def test_main_persists_first_then_every_nth_capture(
@@ -396,7 +527,7 @@ def test_main_persists_first_then_every_nth_capture(
             image_path: Path | None = pictures_root / f"capture-{call_number}.jpg"
         else:
             image_path = None
-        return image_path, 1, ts
+        return image_path, 20000 + call_number, ts
 
     sleep_calls = 0
 
@@ -414,6 +545,14 @@ def test_main_persists_first_then_every_nth_capture(
         [
             "--pictures-dir",
             str(tmp_path / "pictures"),
+            "--x1",
+            "1",
+            "--y1",
+            "2",
+            "--x2",
+            "8",
+            "--y2",
+            "9",
             "--persist-every",
             "2",
             "--interval",
@@ -426,7 +565,7 @@ def test_main_persists_first_then_every_nth_capture(
 
     out = capsys.readouterr().out
     assert "persist_every=2" in out
-    assert "saved=<skipped> value=1" in out
+    assert "saved=<skipped> value=20002" in out
 
 
 def test_main_initializes_postgres_writer_when_enabled(
@@ -462,7 +601,7 @@ def test_main_initializes_postgres_writer_when_enabled(
         postgres_writer: object | None = None,
     ) -> tuple[Path | None, int, datetime]:
         persisted_writers.append(postgres_writer)
-        return pictures_root / "capture.jpg", 1, datetime(2026, 3, 30, 18, 0, 0)
+        return pictures_root / "capture.jpg", 33333, datetime(2026, 3, 30, 18, 0, 0)
 
     def stop_after_first_sleep(_seconds: float) -> None:
         raise KeyboardInterrupt
@@ -484,6 +623,14 @@ def test_main_initializes_postgres_writer_when_enabled(
             "camera-reader",
             "--pictures-dir",
             str(tmp_path / "pictures"),
+            "--x1",
+            "1",
+            "--y1",
+            "2",
+            "--x2",
+            "8",
+            "--y2",
+            "9",
         ]
     )
 
