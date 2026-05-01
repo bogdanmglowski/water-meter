@@ -12,6 +12,7 @@ pub enum Bucket {
     Day,
     Week,
     Month,
+    Year,
 }
 
 impl Bucket {
@@ -21,8 +22,9 @@ impl Bucket {
             "day" => Ok(Self::Day),
             "week" => Ok(Self::Week),
             "month" => Ok(Self::Month),
+            "year" => Ok(Self::Year),
             other => Err(format!(
-                "invalid bucket '{other}', expected hour, day, week, or month"
+                "invalid bucket '{other}', expected hour, day, week, month, or year"
             )),
         }
     }
@@ -379,6 +381,11 @@ fn local_bucket_start(
                 Date::from_calendar_date(date.year(), date.month(), 1).expect("valid month");
             PrimitiveDateTime::new(start_date, Time::MIDNIGHT)
         }
+        Bucket::Year => {
+            let start_date =
+                Date::from_calendar_date(date.year(), Month::January, 1).expect("valid year");
+            PrimitiveDateTime::new(start_date, Time::MIDNIGHT)
+        }
     }
 }
 
@@ -396,6 +403,10 @@ fn next_bucket_start(start: PrimitiveDateTime, bucket: Bucket) -> PrimitiveDateT
             };
             PrimitiveDateTime::new(next_month, Time::MIDNIGHT)
         }
+        Bucket::Year => PrimitiveDateTime::new(
+            Date::from_calendar_date(start.year() + 1, Month::January, 1).expect("valid year"),
+            Time::MIDNIGHT,
+        ),
     }
 }
 
