@@ -15,61 +15,57 @@ CREATE INDEX IF NOT EXISTS idx_meter_readings_recorded_at
 
 TRUNCATE TABLE meter_readings RESTART IDENTITY;
 
-WITH hours AS (
-    SELECT generate_series(
-        date_trunc('hour', now() - interval '60 days'),
-        date_trunc('hour', now()),
-        interval '1 hour'
-    ) AS recorded_at
+WITH bounds AS (
+    SELECT
+        date_trunc('day', now() - interval '2 years') AS start_at,
+        date_trunc('day', now()) + interval '23 hours 50 minutes' AS end_at
 ),
-hourly_usage AS (
+readings AS (
+    SELECT generate_series(start_at, end_at, interval '10 minutes') AS recorded_at
+    FROM bounds
+),
+days AS (
+    SELECT
+        day_start,
+        (1 + floor(random() * 7))::bigint AS daily_usage
+    FROM bounds
+    CROSS JOIN generate_series(
+        date_trunc('day', start_at),
+        date_trunc('day', end_at),
+        interval '1 day'
+    ) AS gs(day_start)
+),
+ranked_readings AS (
+    SELECT
+        r.recorded_at,
+        d.daily_usage,
+        row_number() OVER (
+            PARTITION BY date_trunc('day', r.recorded_at)
+            ORDER BY random()
+        ) AS usage_rank
+    FROM readings r
+    JOIN days d
+        ON d.day_start = date_trunc('day', r.recorded_at)
+),
+interval_usage AS (
     SELECT
         recorded_at,
         CASE
-            WHEN extract(hour FROM recorded_at) BETWEEN 0 AND 4 THEN floor(random() * 2)::int
-            WHEN extract(hour FROM recorded_at) BETWEEN 6 AND 8 THEN 1 + floor(random() * 3)::int
-            WHEN extract(hour FROM recorded_at) BETWEEN 18 AND 22 THEN 2 + floor(random() * 4)::int
-            ELSE floor(random() * 3)::int
-        END
-        + CASE
-            WHEN extract(dow FROM recorded_at) IN (0, 6) THEN 1
-            ELSE 0
+            WHEN usage_rank <= daily_usage THEN 1::bigint
+            ELSE 0::bigint
         END AS delta_m3
-    FROM hours
-),
-with_spikes AS (
-    SELECT
-        recorded_at,
-        CASE
-            WHEN recorded_at = date_trunc('hour', now() - interval '3 days') + interval '19 hours' THEN 12
-            WHEN recorded_at = date_trunc('hour', now() - interval '12 days') + interval '7 hours' THEN 8
-            WHEN recorded_at BETWEEN date_trunc('day', now() - interval '2 days')
-                 AND date_trunc('day', now() - interval '2 days') + interval '4 hours'
-                THEN 4 + floor(random() * 2)::int
-            ELSE delta_m3
-        END AS delta_m3
-    FROM hourly_usage
+    FROM ranked_readings
 ),
 cumulative AS (
     SELECT
         recorded_at,
-        85432 + SUM(delta_m3) OVER (
+        8459 + COALESCE(SUM(delta_m3) OVER (
             ORDER BY recorded_at
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS meter_value_m3
-    FROM with_spikes
-),
-with_reset AS (
-    SELECT
-        recorded_at,
-        CASE
-            WHEN recorded_at = date_trunc('hour', now() - interval '9 days') + interval '12 hours'
-                THEN meter_value_m3 - 3
-            ELSE meter_value_m3
-        END AS meter_value_m3
-    FROM cumulative
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ), 0) AS meter_value_m3
+    FROM interval_usage
 )
 INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
 SELECT recorded_at, meter_value_m3, 'seed'
-FROM with_reset
+FROM cumulative
 ORDER BY recorded_at;
