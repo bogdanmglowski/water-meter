@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/water-meter
-ExecStart=/opt/water-meter/scripts/deploy.sh up
+ExecStart=/opt/water-meter/scripts/deploy.sh up --reader
 ExecStop=/opt/water-meter/scripts/deploy.sh down
 RemainAfterExit=yes
 TimeoutStartSec=0
