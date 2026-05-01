@@ -3,10 +3,10 @@ set -eu
 
 db_host="${POSTGRES_HOST:-db}"
 db_port="${POSTGRES_PORT:-5432}"
-db_user="${POSTGRES_USER:-meter}"
-db_name="${POSTGRES_DB:-water_meter}"
+db_user="${POSTGRES_USER:-water-meter}"
+db_name="${POSTGRES_DB:-water-meter}"
 
-export PGPASSWORD="${POSTGRES_PASSWORD:-meter}"
+export PGPASSWORD="${POSTGRES_PASSWORD:-water-meter}"
 seed_demo_data="${SEED_DEMO_DATA:-true}"
 
 case "$seed_demo_data" in

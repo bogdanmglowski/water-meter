@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://meter:meter@db:5432/water_meter}
+      DATABASE_URL: ${DATABASE_URL:-postgres://water_meter:water_meter@db:5432/water_meter}
       READER_CAMERA_INDEX: ${READER_CAMERA_INDEX:-0}
       READER_INTERVAL_SECONDS: ${READER_INTERVAL_SECONDS:-5}
       READER_PICTURES_DIR: /data/pictures

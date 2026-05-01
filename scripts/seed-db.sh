@@ -11,7 +11,7 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
 fi
 
 docker compose -f "${ROOT_DIR}/infra/docker-compose.yml" exec -T db \
-  psql -U "${POSTGRES_USER:-meter}" -d "${POSTGRES_DB:-water_meter}" \
+  psql -U "${POSTGRES_USER:-water-meter}" -d "${POSTGRES_DB:-water_meter}" \
   < "${ROOT_DIR}/infra/db/seed.sql"
 
 printf 'Seeded PostgreSQL with two years of 10-minute water meter readings.\n'

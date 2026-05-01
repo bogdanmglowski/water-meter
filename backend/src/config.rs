@@ -11,7 +11,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://meter:meter@localhost:5432/water_meter".to_owned());
+            .unwrap_or_else(|_| "postgres://water-meter:water-meter@localhost:5432/water_meter".to_owned());
         let host = env::var("APP_HOST")
             .ok()
             .and_then(|value| value.parse::<IpAddr>().ok())
