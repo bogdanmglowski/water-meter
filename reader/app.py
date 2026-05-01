@@ -41,6 +41,7 @@ else:
 NUMERIC_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)?")
 OCR_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789.,"
 PICTURE_TYPES = ("auto", "raw", "cropped", "annotated", "ocr_input")
+OCR_PREPROCESS_MODES = ("auto", "none")
 POSTGRES_VALUE_MODES = ("truncate", "round", "reject")
 ANNOTATION_COLOR = (0, 255, 0)
 ANNOTATION_THICKNESS = 2
@@ -98,6 +99,9 @@ HELP_EPILOG = """Examples:
 
   USB camera with PostgreSQL writes enabled:
     python3 app.py --source usb --interval 5 --x1 159 --y1 331 --x2 565 --y2 414 --pg-write
+
+  USB camera with CSV disabled:
+    python3 app.py --source usb --no-csv --pg-write
 
   IP camera over RTSP:
     python3 app.py --source ip --ip-camera-url 'rtsp://admin:password@192.168.10.31:554/stream1'
@@ -357,6 +361,7 @@ def capture_and_save_image(
     camera_source: CameraSource | None = None,
     crop_rect: CropRect | None = None,
     picture_type: str = "auto",
+    ocr_preprocess: str = "auto",
     persist_image: bool = True,
 ) -> tuple[
     Path | None,
@@ -393,19 +398,19 @@ def capture_and_save_image(
         image_to_save = frame
         effective_crop_rect = crop_rect
         cropped = crop_image(frame, crop_rect)
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
     elif actual_picture_type == "cropped":
         image_to_save = crop_image(frame, crop_rect)
         effective_crop_rect = None
         cropped = image_to_save
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
     elif actual_picture_type == "annotated":
         image_to_save = annotate_image(frame, crop_rect)
         effective_crop_rect, cropped = extract_cropped_image_from_annotated_image(image_to_save)
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
     elif actual_picture_type == "ocr_input":
         cropped = crop_image(frame, crop_rect)
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
         image_to_save = prepared
         effective_crop_rect = crop_rect
     else:
@@ -485,6 +490,14 @@ def prepare_image_for_ocr(image: cv2.typing.MatLike) -> cv2.typing.MatLike:
     _, thresholded = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     return thresholded
+
+
+def build_ocr_input(image: cv2.typing.MatLike, ocr_preprocess: str) -> cv2.typing.MatLike:
+    if ocr_preprocess == "auto":
+        return prepare_image_for_ocr(image)
+    if ocr_preprocess == "none":
+        return image
+    raise ValueError(f"Unsupported OCR preprocess mode: {ocr_preprocess}")
 
 
 def annotate_image(image: cv2.typing.MatLike, crop_rect: CropRect) -> cv2.typing.MatLike:
@@ -592,6 +605,7 @@ def extract_value_from_image(
     crop_rect: CropRect | None = None,
     debug_output_dir: Path | None = None,
     picture_type: str = "raw",
+    ocr_preprocess: str = "auto",
 ) -> str | None:
     image = read_image(image_path)
     actual_picture_type = resolve_picture_type(
@@ -604,14 +618,14 @@ def extract_value_from_image(
     if actual_picture_type == "raw":
         effective_crop_rect = crop_rect
         cropped = crop_image(image, crop_rect)
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
     elif actual_picture_type == "cropped":
         effective_crop_rect = None
         cropped = image
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
     elif actual_picture_type == "annotated":
         effective_crop_rect, cropped = extract_cropped_image_from_annotated_image(image)
-        prepared = prepare_image_for_ocr(cropped)
+        prepared = build_ocr_input(cropped, ocr_preprocess)
         annotated_image = image
     elif actual_picture_type == "ocr_input":
         effective_crop_rect = None
@@ -642,8 +656,10 @@ def run_capture_cycle(
     camera_source: CameraSource | None = None,
     crop_rect: CropRect | None = None,
     picture_type: str = "auto",
+    ocr_preprocess: str = "auto",
     debug_output_dir: Path | None = None,
     persist_image: bool = True,
+    write_csv: bool = True,
     crop_output_path: Path | None = None,
     postgres_writer: PostgresWriter | None = None,
     ocr_func=extract_value_from_prepared_image,
@@ -657,6 +673,7 @@ def run_capture_cycle(
         camera_source=camera_source,
         crop_rect=crop_rect,
         picture_type=picture_type,
+        ocr_preprocess=ocr_preprocess,
         persist_image=persist_image,
     )
     if debug_output_dir is not None and image_path is not None:
@@ -672,7 +689,8 @@ def run_capture_cycle(
     if crop_output_path is not None:
         write_crop_output(crop_output_path, cropped)
     value = ocr_func(prepared)
-    append_csv_row(csv_path, ts, value)
+    if write_csv:
+        append_csv_row(csv_path, ts, value)
     if postgres_writer is not None:
         postgres_writer.persist(ts, value)
     return image_path, value, ts
@@ -680,7 +698,7 @@ def run_capture_cycle(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Capture images from a USB or IP camera, OCR the water meter value, and append rows to CSV.",
+        description="Capture images from a USB or IP camera, OCR the water meter value, and optionally append rows to CSV.",
         formatter_class=AppHelpFormatter,
         epilog=HELP_EPILOG,
     )
@@ -729,15 +747,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--csv-file",
         type=Path,
         default=Path("readings.csv"),
-        help="CSV file where `date time,value` rows are appended.",
+        help="CSV file where `date time,value` rows are appended unless `--no-csv` is set.",
+    )
+    schedule_group.add_argument(
+        "--no-csv",
+        action="store_true",
+        help="Disable CSV output. OCR, picture persistence, and optional PostgreSQL writes still run.",
     )
     schedule_group.add_argument(
         "--persist-every",
         type=int,
         default=1,
         help=(
-            "Persist the captured picture every N live capture cycles while OCR and CSV logging still run on every "
-            "cycle. The first live capture is always persisted."
+            "Persist the captured picture every N live capture cycles while OCR still runs on every cycle. "
+            "The first live capture is always persisted."
         ),
     )
     schedule_group.add_argument(
@@ -754,6 +777,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     crop_group.add_argument("--y1", type=int, help="Top Y coordinate of the OCR crop rectangle.")
     crop_group.add_argument("--x2", type=int, help="Right X coordinate of the OCR crop rectangle.")
     crop_group.add_argument("--y2", type=int, help="Bottom Y coordinate of the OCR crop rectangle.")
+    crop_group.add_argument(
+        "--ocr-preprocess",
+        choices=OCR_PREPROCESS_MODES,
+        default="auto",
+        help=(
+            "How to transform the cropped OCR region before Tesseract: `auto` applies the current grayscale, blur, "
+            "and threshold pipeline; `none` sends the raw crop directly to OCR."
+        ),
+    )
 
     debug_group = parser.add_argument_group("debug and offline processing")
     debug_group.add_argument(
@@ -784,8 +816,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--pg-write",
         action="store_true",
         help=(
-            "Insert successful OCR readings into the Water Meter PostgreSQL table `meter_readings` in addition to "
-            "writing CSV rows."
+            "Insert successful OCR readings into the Water Meter PostgreSQL table `meter_readings`."
         ),
     )
     postgres_group.add_argument(
@@ -931,6 +962,7 @@ def run_debug_picture(
     crop_rect: CropRect | None,
     debug_output_dir: Path | None,
     picture_type: str,
+    ocr_preprocess: str,
     *,
     timestamp: datetime | None = None,
 ) -> int:
@@ -947,9 +979,13 @@ def run_debug_picture(
         crop_rect=crop_rect,
         debug_output_dir=debug_output_dir,
         picture_type=actual_picture_type,
+        ocr_preprocess=ocr_preprocess,
     )
 
-    status = f"debug_picture={image_path} picture_type={actual_picture_type} saved={saved_image_path}"
+    status = (
+        f"debug_picture={image_path} picture_type={actual_picture_type} "
+        f"ocr_preprocess={ocr_preprocess} saved={saved_image_path}"
+    )
     if value is None:
         status += " value=<none>"
     else:
@@ -1006,6 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
                 crop_rect,
                 debug_output_dir,
                 args.picture_type,
+                args.ocr_preprocess,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"debug_error={exc}", file=sys.stderr)
@@ -1033,8 +1070,9 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "Starting capture loop "
         f"(source={format_camera_source(camera_source)}, interval={args.interval_seconds}s, "
-        f"pictures_dir={args.pictures_dir}, csv={args.csv_file}, crop={crop_rect}, "
-        f"picture_type={args.picture_type}, persist_every={args.persist_every}, crop_output={crop_output_path}, "
+        f"pictures_dir={args.pictures_dir}, csv={'disabled' if args.no_csv else args.csv_file}, crop={crop_rect}, "
+        f"picture_type={args.picture_type}, ocr_preprocess={args.ocr_preprocess}, "
+        f"persist_every={args.persist_every}, crop_output={crop_output_path}, "
         f"debug_output={debug_output_dir}, postgres={format_postgres_target(postgres_target) if postgres_target is not None else 'disabled'})"
     )
 
@@ -1050,8 +1088,10 @@ def main(argv: list[str] | None = None) -> int:
                     camera_source=camera_source,
                     crop_rect=crop_rect,
                     picture_type=args.picture_type,
+                    ocr_preprocess=args.ocr_preprocess,
                     debug_output_dir=debug_output_dir,
                     persist_image=persist_image,
+                    write_csv=not args.no_csv,
                     crop_output_path=crop_output_path,
                     postgres_writer=postgres_writer,
                 )

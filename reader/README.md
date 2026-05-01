@@ -4,11 +4,11 @@ A minimal Python app that:
 1. Captures an image from a USB or IP camera on a timer.
 2. Saves the capture to `pictures/YYYY-MM-DD/`.
 3. OCRs a numeric value from the image.
-4. Appends `date time,value` rows to `readings.csv`.
+4. Appends `date time,value` rows to `readings.csv` by default, unless `--no-csv` is set.
 5. Optionally inserts the reading into Water Meter's PostgreSQL table `meter_readings`.
 
-Without cropping it stores the raw camera frame as `.jpg`. When a crop rectangle is configured, it stores the preprocessed OCR input as `.png`, so the saved file matches the image used to read the digits.
-Live OCR always runs on every interval. You can reduce disk usage with `--persist-every N` to save only every Nth live capture while still OCR'ing and logging every cycle.
+Without cropping it stores the raw camera frame as `.jpg`. When a crop rectangle is configured, `--picture-type auto` stores the preprocessed OCR input as `.png`, while `--picture-type raw` stores the original camera frame.
+Live OCR always runs on every interval. You can reduce disk usage with `--persist-every N` to save only every Nth live capture while still OCR'ing every cycle.
 
 ## Requirements
 
@@ -33,6 +33,7 @@ Common live capture examples:
 ```bash
 python3 app.py --source usb
 python3 app.py --source usb --camera-index 0 --interval 30 --pictures-dir pictures --csv-file readings.csv
+python3 app.py --source usb --no-csv --pg-write
 python3 app.py --source usb --interval 1 --persist-every 12
 python3 app.py --source usb --x1 159 --y1 331 --x2 565 --y2 414 --crop-output meter-crop.png
 python3 app.py --source usb --interval 5 --x1 159 --y1 331 --x2 565 --y2 414 --pg-write
@@ -62,6 +63,8 @@ python3 app.py \
 
 If `DATABASE_URL` is already exported in the shell or loaded from the project `.env`, `--pg-database-url` can be omitted.
 
+Use `--no-csv` to disable CSV output entirely. OCR still runs, picture persistence still follows `--persist-every`, and `--pg-write` can still insert readings into PostgreSQL.
+
 Source selection rules:
 
 - `--source usb` opens a local camera by OpenCV index via `--camera-index`.
@@ -77,7 +80,7 @@ Coordinate rules:
 - All four coordinates must be provided together.
 - The crop must stay inside the captured image bounds.
 
-The OCR path preprocesses the cropped region before sending it to Tesseract, which works better for meter windows that mix white and red digits.
+By default the OCR path preprocesses the cropped region before sending it to Tesseract, which works better for meter windows that mix white and red digits. Use `--ocr-preprocess none` to send the raw crop directly to Tesseract instead.
 
 ## Debug mode
 
@@ -102,7 +105,7 @@ python3 app.py \
 
 - `*_annotated.png`: original image with the crop rectangle drawn on it.
 - `*_cropped.png`: the exact rectangle sent into OCR preprocessing.
-- `*_ocr_input.png`: the thresholded image passed to Tesseract.
+- `*_ocr_input.png`: the exact image passed to Tesseract after the selected `--ocr-preprocess` mode.
 
 The app logs the selected live source at startup. If the source URL contains credentials, the password is masked in the console output.
 
@@ -112,8 +115,10 @@ Use `--pg-write` to insert each successful OCR reading into the same `meter_read
 
 Supported arguments:
 
-- `--pg-write`: enables database inserts in addition to the existing CSV append.
+- `--pg-write`: enables database inserts for successful OCR readings.
+- `--no-csv`: disables CSV output while keeping OCR, image persistence, and optional PostgreSQL inserts enabled.
 - `--crop-output`: writes the latest cropped OCR window to a fixed path such as `meter-crop.png`.
+- `--ocr-preprocess`: controls whether Tesseract receives the default preprocessed image or the raw crop.
 - `--pg-database-url`: PostgreSQL connection string. If omitted, the app falls back to `DATABASE_URL`.
 - `--pg-source`: value written into the `source` column. Default: `reader`.
 - `--pg-value-mode`: maps OCR text into Water Meter's integer `meter_value_m3` column.
@@ -128,7 +133,7 @@ Important integration note:
 
 - The current Water Meter schema stores `meter_value_m3` as `BIGINT`, so PostgreSQL inserts are integer-only.
 - If your crop includes decimal wheels, `truncate` is usually the right choice because the dashboard currently works on whole cubic meters.
-- Failed OCR values are still written as empty CSV rows, but they are not inserted into PostgreSQL.
+- Failed OCR values are still written as empty CSV rows when CSV output is enabled, but they are not inserted into PostgreSQL.
 - Inserts use `ON CONFLICT (recorded_at) DO UPDATE`, so rerunning the same second updates that row instead of crashing on the unique timestamp constraint.
 - `--crop-output` is only available in live capture mode and requires crop coordinates.
 - `--pg-write` is only available in live capture mode; it is intentionally rejected with `--debug-picture`.
@@ -145,7 +150,7 @@ If OCR fails to find a numeric token, the app writes an empty value for that tim
 
 ## Persist Every Nth Capture
 
-Use `--persist-every N` in live mode to save only some of the pictures while still running OCR and appending CSV rows on every interval.
+Use `--persist-every N` in live mode to save only some of the pictures while still running OCR on every interval. If CSV output is enabled, rows are still appended on every interval.
 
 Example:
 
@@ -153,7 +158,7 @@ Example:
 python3 app.py --source usb --interval 1 --persist-every 12
 ```
 
-With `--persist-every 12`, the app saves the 1st, 13th, 25th, and later matching live captures. The 11 cycles in between still capture, crop, OCR, and write CSV rows, but they do not write an image file.
+With `--persist-every 12`, the app saves the 1st, 13th, 25th, and later matching live captures. The 11 cycles in between still capture and crop, run OCR, and optionally write CSV rows, but they do not write an image file.
 
 ## More examples
 
@@ -161,7 +166,26 @@ With `--persist-every 12`, the app saves the 1st, 13th, 25th, and later matching
 python3 app.py \
   --source usb \
   --interval 3 \
+  --no-csv \
+  --pg-write \
+  --pg-database-url 'postgres://meter:meter@localhost:5432/water_meter' \
+  --pg-source reader-usb \
   --x1 177 --y1 171 --x2 349 --y2 201
+
+python3 app.py \
+  --source usb \
+  --interval 3 \
+  --x1 177 --y1 171 --x2 349 --y2 201
+
+python3 app.py \
+  --source usb \
+  --interval 5 \
+  --persist-every 100 \
+  --pictures-dir /data/pictures \
+  --csv-file /data/readings.csv \
+  --picture-type raw \
+  --ocr-preprocess none \
+  --x1 159 --y1 331 --x2 565 --y2 414
 
 python3 app.py \
   --source ip \
@@ -194,6 +218,8 @@ READER_SOURCE=usb
 READER_CAMERA_INDEX=0
 READER_VIDEO_DEVICE=/dev/video0
 READER_INTERVAL_SECONDS=5
+READER_PICTURE_TYPE=raw
+READER_OCR_PREPROCESS=none
 READER_X1=159
 READER_Y1=331
 READER_X2=565

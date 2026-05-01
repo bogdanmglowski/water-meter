@@ -169,6 +169,26 @@ def test_run_capture_cycle_persists_to_postgres_writer(tmp_path: Path) -> None:
     assert calls == [(timestamp, "321.9")]
 
 
+def test_run_capture_cycle_without_csv_does_not_create_csv_file(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 20, 46)
+    csv_file = tmp_path / "readings.csv"
+
+    _, value, ts = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        csv_file,
+        timestamp=timestamp,
+        write_csv=False,
+        ocr_func=lambda _: "654.3",
+    )
+
+    assert value == "654.3"
+    assert ts == timestamp
+    assert not csv_file.exists()
+
+
 def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
     frame = np.zeros((20, 30, 3), dtype=np.uint8)
     frame[4:16, 8:22] = (0, 0, 255)
@@ -269,6 +289,38 @@ def test_run_capture_cycle_with_picture_type_cropped_saves_cropped_image(tmp_pat
     assert saved is not None
     np.testing.assert_array_equal(saved, expected_cropped)
     np.testing.assert_array_equal(captured["prepared"], expected_prepared)
+
+
+def test_run_capture_cycle_with_no_ocr_preprocess_uses_raw_crop_for_ocr(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    frame[4:16, 8:22] = (10, 20, 230)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 21, 45)
+
+    crop_rect = CropRect(8, 4, 22, 16)
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_ocr(prepared: np.ndarray) -> str:
+        captured["prepared"] = prepared.copy()
+        return "816.03"
+
+    image_path, value, ts = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        tmp_path / "readings.csv",
+        timestamp=timestamp,
+        crop_rect=crop_rect,
+        picture_type="raw",
+        ocr_preprocess="none",
+        ocr_func=fake_ocr,
+    )
+
+    expected_cropped = crop_image(frame, crop_rect)
+
+    assert value == "816.03"
+    assert ts == timestamp
+    assert image_path == tmp_path / "pictures" / "2026-03-16" / "2026-03-16_10-21-45.jpg"
+    np.testing.assert_array_equal(captured["prepared"], expected_cropped)
 
 
 def test_run_capture_cycle_without_persistence_still_ocrs_and_writes_csv(tmp_path: Path) -> None:
@@ -602,6 +654,34 @@ def test_extract_value_from_image_writes_debug_artifacts(
     assert prepared.shape == (36, 66)
 
 
+def test_extract_value_from_image_with_no_ocr_preprocess_uses_raw_crop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = np.zeros((20, 30, 3), dtype=np.uint8)
+    image[4:16, 8:22] = (0, 40, 255)
+    image_path = tmp_path / "meter.png"
+    assert cv2.imwrite(str(image_path), image)
+
+    crop_rect = CropRect(8, 4, 22, 16)
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_image_to_string(ocr_image: np.ndarray, config: str) -> str:
+        captured["ocr_image"] = ocr_image.copy()
+        return "00816.01"
+
+    monkeypatch.setattr(app.pytesseract, "image_to_string", fake_image_to_string)
+
+    value = app.extract_value_from_image(
+        image_path,
+        crop_rect=crop_rect,
+        ocr_preprocess="none",
+    )
+
+    assert value == "00816.01"
+    np.testing.assert_array_equal(captured["ocr_image"], crop_image(image, crop_rect))
+
+
 def test_extract_value_from_annotated_image_uses_detected_rectangle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -655,11 +735,13 @@ def test_run_debug_picture_saves_exact_input_file_to_pictures_dir(
         crop_rect: CropRect | None = None,
         debug_output_dir: Path | None = None,
         picture_type: str = "raw",
+        ocr_preprocess: str = "auto",
     ) -> str:
         calls["path"] = path
         calls["crop_rect"] = crop_rect
         calls["debug_output_dir"] = debug_output_dir
         calls["picture_type"] = picture_type
+        calls["ocr_preprocess"] = ocr_preprocess
         return "91.7"
 
     monkeypatch.setattr(app, "extract_value_from_image", fake_extract)
@@ -670,6 +752,7 @@ def test_run_debug_picture_saves_exact_input_file_to_pictures_dir(
         None,
         None,
         "annotated",
+        "none",
         timestamp=timestamp,
     )
 
@@ -680,6 +763,7 @@ def test_run_debug_picture_saves_exact_input_file_to_pictures_dir(
         "crop_rect": None,
         "debug_output_dir": None,
         "picture_type": "annotated",
+        "ocr_preprocess": "none",
     }
 
     assert saved_path.exists()
@@ -688,6 +772,7 @@ def test_run_debug_picture_saves_exact_input_file_to_pictures_dir(
     out = capsys.readouterr().out
     assert f"saved={saved_path}" in out
     assert "value=91.7" in out
+    assert "ocr_preprocess=none" in out
 
 
 def test_main_debug_picture_processes_existing_file_without_camera(
@@ -705,11 +790,13 @@ def test_main_debug_picture_processes_existing_file_without_camera(
         crop_rect: CropRect | None = None,
         debug_output_dir: Path | None = None,
         picture_type: str = "raw",
+        ocr_preprocess: str = "auto",
     ) -> str:
         calls["path"] = path
         calls["crop_rect"] = crop_rect
         calls["debug_output_dir"] = debug_output_dir
         calls["picture_type"] = picture_type
+        calls["ocr_preprocess"] = ocr_preprocess
         return "88.1"
 
     monkeypatch.setattr(app, "extract_value_from_image", fake_extract)
@@ -752,11 +839,13 @@ def test_main_debug_picture_processes_existing_file_without_camera(
         "crop_rect": CropRect(1, 2, 8, 9),
         "debug_output_dir": None,
         "picture_type": "raw",
+        "ocr_preprocess": "auto",
     }
 
     out = capsys.readouterr().out
     assert f"debug_picture={image_path}" in out
     assert "picture_type=raw" in out
+    assert "ocr_preprocess=auto" in out
     assert f"saved={saved_path}" in out
     assert "value=88.1" in out
     assert saved_path.exists()
@@ -863,8 +952,10 @@ def test_help_text_includes_ip_camera_usage_examples() -> None:
 
     assert "--source {usb,ip}" in help_text
     assert "--ip-camera-url IP_CAMERA_URL" in help_text
+    assert "--no-csv" in help_text
     assert "--persist-every PERSIST_EVERY" in help_text
     assert "--crop-output CROP_OUTPUT" in help_text
+    assert "--ocr-preprocess {auto,none}" in help_text
     assert "--pg-write" in help_text
     assert "python3 app.py --source ip --ip-camera-url" in help_text
     assert "python3 app.py --debug-picture" in help_text
@@ -887,8 +978,10 @@ def test_main_uses_ip_camera_source_and_masks_password_in_logs(
         camera_source: CameraSource | None = None,
         crop_rect: CropRect | None = None,
         picture_type: str = "auto",
+        ocr_preprocess: str = "auto",
         debug_output_dir: Path | None = None,
         persist_image: bool = True,
+        write_csv: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
         ocr_func=app.extract_value_from_prepared_image,
@@ -896,7 +989,9 @@ def test_main_uses_ip_camera_source_and_masks_password_in_logs(
         capture_calls["camera"] = camera
         capture_calls["camera_source"] = camera_source
         capture_calls["crop_output_path"] = crop_output_path
+        capture_calls["ocr_preprocess"] = ocr_preprocess
         capture_calls["postgres_writer"] = postgres_writer
+        capture_calls["write_csv"] = write_csv
         return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", "123.4", timestamp or datetime.now()
 
     def stop_after_first_sleep(_seconds: float) -> None:
@@ -924,7 +1019,9 @@ def test_main_uses_ip_camera_source_and_masks_password_in_logs(
     assert capture_calls["camera"] is None
     assert capture_calls["camera_source"] == CameraSource("ip", stream_url)
     assert capture_calls["crop_output_path"] is None
+    assert capture_calls["ocr_preprocess"] == "auto"
     assert capture_calls["postgres_writer"] is None
+    assert capture_calls["write_csv"] is True
 
     out = capsys.readouterr().out
     assert "source=ip(url=rtsp://admin:***@192.168.10.31:554/stream1)" in out
@@ -947,8 +1044,10 @@ def test_main_persists_first_then_every_nth_capture(
         camera_source: CameraSource | None = None,
         crop_rect: CropRect | None = None,
         picture_type: str = "auto",
+        ocr_preprocess: str = "auto",
         debug_output_dir: Path | None = None,
         persist_image: bool = True,
+        write_csv: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
         ocr_func=app.extract_value_from_prepared_image,
@@ -1025,8 +1124,10 @@ def test_main_initializes_postgres_writer_when_enabled(
         camera_source: CameraSource | None = None,
         crop_rect: CropRect | None = None,
         picture_type: str = "auto",
+        ocr_preprocess: str = "auto",
         debug_output_dir: Path | None = None,
         persist_image: bool = True,
+        write_csv: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
         ocr_func=app.extract_value_from_prepared_image,
@@ -1076,3 +1177,61 @@ def test_main_initializes_postgres_writer_when_enabled(
 
     out = capsys.readouterr().out
     assert "postgres=enabled(source=camera-reader, value_mode=round)" in out
+
+
+def test_main_disables_csv_when_flag_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    capture_calls: dict[str, object] = {}
+
+    def fake_run_capture_cycle(
+        camera: object,
+        pictures_root: Path,
+        csv_path: Path,
+        *,
+        timestamp: datetime | None = None,
+        camera_source: CameraSource | None = None,
+        crop_rect: CropRect | None = None,
+        picture_type: str = "auto",
+        ocr_preprocess: str = "auto",
+        debug_output_dir: Path | None = None,
+        persist_image: bool = True,
+        write_csv: bool = True,
+        crop_output_path: Path | None = None,
+        postgres_writer: object | None = None,
+        ocr_func=app.extract_value_from_prepared_image,
+    ) -> tuple[Path | None, str | None, datetime]:
+        capture_calls["csv_path"] = csv_path
+        capture_calls["write_csv"] = write_csv
+        return pictures_root / "capture.jpg", "222.8", timestamp or datetime.now()
+
+    def stop_after_first_sleep(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(app, "run_capture_cycle", fake_run_capture_cycle)
+    monkeypatch.setattr(app.time, "sleep", stop_after_first_sleep)
+
+    exit_code = app.main(
+        [
+            "--source",
+            "ip",
+            "--ip-camera-url",
+            "rtsp://camera/stream1",
+            "--pictures-dir",
+            str(tmp_path / "pictures"),
+            "--csv-file",
+            str(tmp_path / "readings.csv"),
+            "--no-csv",
+            "--interval",
+            "1",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capture_calls["csv_path"] == tmp_path / "readings.csv"
+    assert capture_calls["write_csv"] is False
+
+    out = capsys.readouterr().out
+    assert "csv=disabled" in out

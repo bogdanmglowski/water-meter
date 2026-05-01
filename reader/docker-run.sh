@@ -27,8 +27,10 @@ ip_camera_url="${READER_IP_CAMERA_URL:-}"
 interval_seconds="${READER_INTERVAL_SECONDS:-5}"
 pictures_dir="${READER_PICTURES_DIR:-/data/pictures}"
 csv_file="${READER_CSV_FILE:-/data/readings.csv}"
+no_csv="${READER_NO_CSV:-true}"
 persist_every="${READER_PERSIST_EVERY:-1}"
 picture_type="${READER_PICTURE_TYPE:-auto}"
+ocr_preprocess="${READER_OCR_PREPROCESS:-none}"
 crop_output="${READER_CROP_OUTPUT:-}"
 debug_output="${READER_DEBUG_OUTPUT:-}"
 pg_source="${READER_PG_SOURCE:-reader-docker}"
@@ -45,7 +47,12 @@ set -- \
     --pictures-dir "$pictures_dir" \
     --csv-file "$csv_file" \
     --persist-every "$persist_every" \
-    --picture-type "$picture_type"
+    --picture-type "$picture_type" \
+    --ocr-preprocess "$ocr_preprocess"
+
+if is_true "$no_csv"; then
+    set -- "$@" --no-csv
+fi
 
 case "$source_kind" in
     usb)
