@@ -23,3 +23,11 @@ Thumbs.db
 /frontend/vite.config.d.ts
 /frontend/vite.config.js.map
 /frontend/npm-debug.log*
+
+
+# reader
+/reader/__pycache__/
+/reader/.pytest_cache/
+/reader/pictures/
+/reader/readings.csv
+
