@@ -4,6 +4,7 @@ import csv
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -15,12 +16,17 @@ import app
 from app import (
     CameraSource,
     CropRect,
+    PostgresWriter,
+    PostgresTarget,
     add_ocr_border,
     build_arg_parser,
+    convert_ocr_value_to_meter_value,
     crop_image,
     normalize_ocr_text,
     parse_camera_source,
+    parse_crop_output,
     parse_crop_rect,
+    parse_postgres_target,
     prepare_image_for_ocr,
     run_capture_cycle,
 )
@@ -44,6 +50,71 @@ def test_normalize_ocr_text() -> None:
     assert normalize_ocr_text("meter: 12,34 l") == "12.34"
     assert normalize_ocr_text("abc") is None
     assert normalize_ocr_text("") is None
+
+
+def test_convert_ocr_value_to_meter_value_modes() -> None:
+    assert convert_ocr_value_to_meter_value("12345", "truncate") == 12345
+    assert convert_ocr_value_to_meter_value("12345.99", "truncate") == 12345
+    assert convert_ocr_value_to_meter_value("12345.50", "round") == 12346
+    assert convert_ocr_value_to_meter_value("12345", "reject") == 12345
+
+
+def test_convert_ocr_value_to_meter_value_rejects_fraction_when_requested() -> None:
+    with pytest.raises(ValueError, match="fractional component"):
+        convert_ocr_value_to_meter_value("12345.67", "reject")
+
+
+def test_postgres_writer_persists_upsert_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    executed: dict[str, object] = {}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            executed["query"] = query
+            executed["params"] = params
+
+    class FakeConnection:
+        closed = False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_connection = FakeConnection()
+
+    def fake_connect(database_url: str, autocommit: bool) -> FakeConnection:
+        executed["database_url"] = database_url
+        executed["autocommit"] = autocommit
+        return fake_connection
+
+    monkeypatch.setattr(app, "_PSYCOPG_IMPORT_ERROR", None)
+    monkeypatch.setattr(app, "psycopg", SimpleNamespace(connect=fake_connect))
+
+    writer = PostgresWriter(
+        PostgresTarget(
+            database_url="postgres://meter:meter@db:5432/water_meter",
+            source="reader-test",
+            value_mode="truncate",
+        )
+    )
+
+    writer.persist(datetime(2026, 3, 16, 10, 20, 30), "321.9")
+
+    assert executed["database_url"] == "postgres://meter:meter@db:5432/water_meter"
+    assert executed["autocommit"] is True
+    assert "INSERT INTO meter_readings" in str(executed["query"])
+    assert "ON CONFLICT (recorded_at) DO UPDATE" in str(executed["query"])
+    params = executed["params"]
+    assert isinstance(params, tuple)
+    assert params[1:] == (321, "reader-test")
+    assert getattr(params[0], "tzinfo", None) is not None
 
 
 def test_run_capture_cycle_writes_image_and_csv(tmp_path: Path) -> None:
@@ -72,6 +143,53 @@ def test_run_capture_cycle_writes_image_and_csv(tmp_path: Path) -> None:
         ["date time", "value"],
         ["2026-03-16 10:20:30", "123.4"],
     ]
+
+
+def test_run_capture_cycle_persists_to_postgres_writer(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 20, 45)
+    calls: list[tuple[datetime, str | None]] = []
+
+    class FakePostgresWriter:
+        def persist(self, ts: datetime, value: str | None) -> None:
+            calls.append((ts, value))
+
+    _, value, ts = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        tmp_path / "readings.csv",
+        timestamp=timestamp,
+        postgres_writer=FakePostgresWriter(),
+        ocr_func=lambda _: "321.9",
+    )
+
+    assert value == "321.9"
+    assert ts == timestamp
+    assert calls == [(timestamp, "321.9")]
+
+
+def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    frame[4:16, 8:22] = (0, 0, 255)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 20, 50)
+    crop_rect = CropRect(8, 4, 22, 16)
+    crop_output = tmp_path / "meter-crop.png"
+
+    run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        tmp_path / "readings.csv",
+        timestamp=timestamp,
+        crop_rect=crop_rect,
+        crop_output_path=crop_output,
+        ocr_func=lambda _: "123.0",
+    )
+
+    saved = cv2.imread(str(crop_output))
+    assert saved is not None
+    np.testing.assert_array_equal(saved, crop_image(frame, crop_rect))
 
 
 def test_run_capture_cycle_with_crop_rect_saves_prepared_ocr_image(tmp_path: Path) -> None:
@@ -346,6 +464,72 @@ def test_parse_camera_source_rejects_ip_camera_url_for_usb_source() -> None:
         parse_camera_source(args, parser)
 
 
+def test_parse_postgres_target_defaults_to_disabled() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args([])
+
+    assert parse_postgres_target(args, parser) is None
+
+
+def test_parse_postgres_target_uses_explicit_database_url() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        [
+            "--pg-write",
+            "--pg-database-url",
+            "postgres://meter:meter@localhost:5432/water_meter",
+            "--pg-source",
+            "camera-reader",
+            "--pg-value-mode",
+            "round",
+        ]
+    )
+
+    assert parse_postgres_target(args, parser) == PostgresTarget(
+        database_url="postgres://meter:meter@localhost:5432/water_meter",
+        source="camera-reader",
+        value_mode="round",
+    )
+
+
+def test_parse_postgres_target_uses_database_url_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(["--pg-write"])
+    monkeypatch.setenv("DATABASE_URL", "postgres://meter:meter@db:5432/water_meter")
+
+    assert parse_postgres_target(args, parser) == PostgresTarget(
+        database_url="postgres://meter:meter@db:5432/water_meter",
+        source="reader",
+        value_mode="truncate",
+    )
+
+
+def test_parse_postgres_target_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(["--pg-write"])
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(SystemExit):
+        parse_postgres_target(args, parser)
+
+
+def test_parse_crop_output_defaults_to_disabled() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args([])
+
+    assert parse_crop_output(args, None, parser) is None
+
+
+def test_parse_crop_output_requires_crop_rect() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(["--crop-output", "meter-crop.png"])
+
+    with pytest.raises(SystemExit):
+        parse_crop_output(args, None, parser)
+
+
 def test_parse_crop_rect_rejects_partial_rectangle() -> None:
     parser = build_arg_parser()
     args = parser.parse_args(["--x1", "10", "--y1", "20"])
@@ -601,6 +785,45 @@ def test_main_rejects_crop_coordinates_for_annotated_debug_picture(tmp_path: Pat
         )
 
 
+def test_main_rejects_pg_write_with_debug_picture(tmp_path: Path) -> None:
+    image_path = tmp_path / "meter.png"
+    assert cv2.imwrite(str(image_path), np.zeros((10, 10, 3), dtype=np.uint8))
+
+    with pytest.raises(SystemExit):
+        app.main(
+            [
+                "--debug-picture",
+                str(image_path),
+                "--pg-write",
+                "--pg-database-url",
+                "postgres://meter:meter@db:5432/water_meter",
+            ]
+        )
+
+
+def test_main_rejects_crop_output_with_debug_picture(tmp_path: Path) -> None:
+    image_path = tmp_path / "meter.png"
+    assert cv2.imwrite(str(image_path), np.zeros((10, 10, 3), dtype=np.uint8))
+
+    with pytest.raises(SystemExit):
+        app.main(
+            [
+                "--debug-picture",
+                str(image_path),
+                "--x1",
+                "1",
+                "--y1",
+                "2",
+                "--x2",
+                "8",
+                "--y2",
+                "9",
+                "--crop-output",
+                "meter-crop.png",
+            ]
+        )
+
+
 def test_main_rejects_non_positive_persist_every() -> None:
     with pytest.raises(SystemExit):
         app.main(["--persist-every", "0"])
@@ -641,6 +864,8 @@ def test_help_text_includes_ip_camera_usage_examples() -> None:
     assert "--source {usb,ip}" in help_text
     assert "--ip-camera-url IP_CAMERA_URL" in help_text
     assert "--persist-every PERSIST_EVERY" in help_text
+    assert "--crop-output CROP_OUTPUT" in help_text
+    assert "--pg-write" in help_text
     assert "python3 app.py --source ip --ip-camera-url" in help_text
     assert "python3 app.py --debug-picture" in help_text
 
@@ -664,10 +889,14 @@ def test_main_uses_ip_camera_source_and_masks_password_in_logs(
         picture_type: str = "auto",
         debug_output_dir: Path | None = None,
         persist_image: bool = True,
+        crop_output_path: Path | None = None,
+        postgres_writer: object | None = None,
         ocr_func=app.extract_value_from_prepared_image,
     ) -> tuple[Path | None, str | None, datetime]:
         capture_calls["camera"] = camera
         capture_calls["camera_source"] = camera_source
+        capture_calls["crop_output_path"] = crop_output_path
+        capture_calls["postgres_writer"] = postgres_writer
         return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", "123.4", timestamp or datetime.now()
 
     def stop_after_first_sleep(_seconds: float) -> None:
@@ -694,6 +923,8 @@ def test_main_uses_ip_camera_source_and_masks_password_in_logs(
     assert exit_code == 0
     assert capture_calls["camera"] is None
     assert capture_calls["camera_source"] == CameraSource("ip", stream_url)
+    assert capture_calls["crop_output_path"] is None
+    assert capture_calls["postgres_writer"] is None
 
     out = capsys.readouterr().out
     assert "source=ip(url=rtsp://admin:***@192.168.10.31:554/stream1)" in out
@@ -718,6 +949,8 @@ def test_main_persists_first_then_every_nth_capture(
         picture_type: str = "auto",
         debug_output_dir: Path | None = None,
         persist_image: bool = True,
+        crop_output_path: Path | None = None,
+        postgres_writer: object | None = None,
         ocr_func=app.extract_value_from_prepared_image,
     ) -> tuple[Path | None, str | None, datetime]:
         persist_calls.append(persist_image)
@@ -763,3 +996,83 @@ def test_main_persists_first_then_every_nth_capture(
     out = capsys.readouterr().out
     assert "persist_every=2" in out
     assert "saved=<skipped> value=100.2" in out
+
+
+def test_main_initializes_postgres_writer_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    created_targets: list[PostgresTarget] = []
+    persisted_writers: list[object | None] = []
+
+    class FakePostgresWriter:
+        def __init__(self, target: PostgresTarget) -> None:
+            created_targets.append(target)
+
+        def connect(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    def fake_run_capture_cycle(
+        camera: object,
+        pictures_root: Path,
+        csv_path: Path,
+        *,
+        timestamp: datetime | None = None,
+        camera_source: CameraSource | None = None,
+        crop_rect: CropRect | None = None,
+        picture_type: str = "auto",
+        debug_output_dir: Path | None = None,
+        persist_image: bool = True,
+        crop_output_path: Path | None = None,
+        postgres_writer: object | None = None,
+        ocr_func=app.extract_value_from_prepared_image,
+    ) -> tuple[Path | None, str | None, datetime]:
+        persisted_writers.append(postgres_writer)
+        return pictures_root / "capture.jpg", "111.4", timestamp or datetime.now()
+
+    def stop_after_first_sleep(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(app, "PostgresWriter", FakePostgresWriter)
+    monkeypatch.setattr(app, "ensure_postgres_dependencies", lambda: None)
+    monkeypatch.setattr(app, "run_capture_cycle", fake_run_capture_cycle)
+    monkeypatch.setattr(app.time, "sleep", stop_after_first_sleep)
+
+    exit_code = app.main(
+        [
+            "--source",
+            "ip",
+            "--ip-camera-url",
+            "rtsp://camera/stream1",
+            "--interval",
+            "1",
+            "--pg-write",
+            "--pg-database-url",
+            "postgres://meter:meter@db:5432/water_meter",
+            "--pg-source",
+            "camera-reader",
+            "--pg-value-mode",
+            "round",
+            "--pictures-dir",
+            str(tmp_path / "pictures"),
+            "--csv-file",
+            str(tmp_path / "readings.csv"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert created_targets == [
+        PostgresTarget(
+            database_url="postgres://meter:meter@db:5432/water_meter",
+            source="camera-reader",
+            value_mode="round",
+        )
+    ]
+    assert len(persisted_writers) == 1
+
+    out = capsys.readouterr().out
+    assert "postgres=enabled(source=camera-reader, value_mode=round)" in out

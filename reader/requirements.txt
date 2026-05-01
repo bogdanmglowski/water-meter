@@ -1,4 +1,5 @@
 opencv-python
 pytesseract
 numpy
+psycopg[binary]
 pytest

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import shutil
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 try:
@@ -27,9 +30,18 @@ except ModuleNotFoundError as exc:
 else:
     _PYTESSERACT_IMPORT_ERROR = None
 
+try:
+    import psycopg
+except ModuleNotFoundError as exc:
+    psycopg = None
+    _PSYCOPG_IMPORT_ERROR = exc
+else:
+    _PSYCOPG_IMPORT_ERROR = None
+
 NUMERIC_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)?")
 OCR_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789.,"
 PICTURE_TYPES = ("auto", "raw", "cropped", "annotated", "ocr_input")
+POSTGRES_VALUE_MODES = ("truncate", "round", "reject")
 ANNOTATION_COLOR = (0, 255, 0)
 ANNOTATION_THICKNESS = 2
 CAMERA_SOURCES = ("usb", "ip")
@@ -64,6 +76,13 @@ class CameraSource:
     target: int | str
 
 
+@dataclass(frozen=True)
+class PostgresTarget:
+    database_url: str
+    source: str
+    value_mode: str
+
+
 HELP_EPILOG = """Examples:
   USB camera with the default webcam:
     python3 app.py --source usb
@@ -73,6 +92,12 @@ HELP_EPILOG = """Examples:
 
   USB camera with OCR every second but only every 12th picture persisted:
     python3 app.py --source usb --interval 1 --persist-every 12
+
+  USB camera with a fixed latest-crop output file:
+    python3 app.py --source usb --x1 159 --y1 331 --x2 565 --y2 414 --crop-output meter-crop.png
+
+  USB camera with PostgreSQL writes enabled:
+    python3 app.py --source usb --interval 5 --x1 159 --y1 331 --x2 565 --y2 414 --pg-write
 
   IP camera over RTSP:
     python3 app.py --source ip --ip-camera-url 'rtsp://admin:password@192.168.10.31:554/stream1'
@@ -110,6 +135,21 @@ def ensure_runtime_dependencies() -> None:
             f"`source {project_python.parent / 'activate'}`."
         )
     message += " To install them into the current interpreter, run `python3 -m pip install -r requirements.txt`."
+    raise RuntimeError(message)
+
+
+def ensure_postgres_dependencies() -> None:
+    if _PSYCOPG_IMPORT_ERROR is None:
+        return
+
+    message = "Missing Python dependency: psycopg[binary]."
+    project_python = find_project_python()
+    if project_python is not None:
+        message += (
+            f" Use `{project_python} app.py ...` or activate the virtualenv with "
+            f"`source {project_python.parent / 'activate'}`."
+        )
+    message += " To install it into the current interpreter, run `python3 -m pip install -r requirements.txt`."
     raise RuntimeError(message)
 
 
@@ -161,6 +201,10 @@ def format_camera_source(camera_source: CameraSource) -> str:
     return f"ip(url={mask_url_credentials(str(camera_source.target))})"
 
 
+def format_postgres_target(target: PostgresTarget) -> str:
+    return f"enabled(source={target.source}, value_mode={target.value_mode})"
+
+
 def ensure_csv_header(csv_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     if csv_path.exists() and csv_path.stat().st_size > 0:
@@ -177,6 +221,81 @@ def append_csv_row(csv_path: Path, timestamp: datetime, value: str | None) -> No
     with csv_path.open("a", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow([timestamp.strftime("%Y-%m-%d %H:%M:%S"), value or ""])
+
+
+def convert_ocr_value_to_meter_value(value: str, value_mode: str) -> int:
+    numeric = Decimal(value)
+
+    if value_mode == "truncate":
+        return int(numeric)
+    if value_mode == "round":
+        return int(numeric.to_integral_value(rounding=ROUND_HALF_UP))
+    if value_mode == "reject":
+        integral = numeric.to_integral_value()
+        if numeric != integral:
+            raise ValueError(
+                f"OCR value {value} includes a fractional component; use --pg-value-mode truncate or round"
+            )
+        return int(integral)
+
+    raise ValueError(f"Unsupported PostgreSQL value mode: {value_mode}")
+
+
+def normalize_postgres_timestamp(timestamp: datetime) -> datetime:
+    if timestamp.tzinfo is None:
+        return timestamp.astimezone().astimezone(timezone.utc)
+    return timestamp.astimezone(timezone.utc)
+
+
+class PostgresWriter:
+    def __init__(self, target: PostgresTarget) -> None:
+        self.target = target
+        self._connection: Any | None = None
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+
+    def _connect(self) -> Any:
+        ensure_postgres_dependencies()
+        try:
+            return psycopg.connect(self.target.database_url, autocommit=True)
+        except Exception as exc:  # noqa: BLE001
+            masked_url = mask_url_credentials(self.target.database_url)
+            raise RuntimeError(f"Could not connect to PostgreSQL {masked_url}: {exc}") from exc
+
+    def _ensure_connection(self) -> Any:
+        if self._connection is None or getattr(self._connection, "closed", False):
+            self._connection = self._connect()
+        return self._connection
+
+    def connect(self) -> None:
+        self._ensure_connection()
+
+    def persist(self, timestamp: datetime, value: str | None) -> None:
+        if value is None:
+            return
+
+        recorded_at = normalize_postgres_timestamp(timestamp)
+        meter_value_m3 = convert_ocr_value_to_meter_value(value, self.target.value_mode)
+        connection = self._ensure_connection()
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (recorded_at) DO UPDATE
+                    SET meter_value_m3 = EXCLUDED.meter_value_m3,
+                        source = EXCLUDED.source
+                    """,
+                    (recorded_at, meter_value_m3, self.target.source),
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.close()
+            raise RuntimeError(f"Failed to persist reading to PostgreSQL: {exc}") from exc
 
 
 def build_capture_image_path(
@@ -201,6 +320,11 @@ def build_debug_picture_save_path(
 
     suffix = source_path.suffix or ".png"
     return day_dir / f"{timestamp.strftime('%Y-%m-%d_%H-%M-%S')}{suffix}"
+
+
+def write_crop_output(crop_output_path: Path, cropped: cv2.typing.MatLike) -> None:
+    crop_output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_image(crop_output_path, cropped)
 
 
 def save_debug_picture_input(
@@ -520,6 +644,8 @@ def run_capture_cycle(
     picture_type: str = "auto",
     debug_output_dir: Path | None = None,
     persist_image: bool = True,
+    crop_output_path: Path | None = None,
+    postgres_writer: PostgresWriter | None = None,
     ocr_func=extract_value_from_prepared_image,
 ) -> tuple[Path | None, str | None, datetime]:
     ensure_runtime_dependencies()
@@ -543,8 +669,12 @@ def run_capture_cycle(
             debug_output_dir,
             annotated_image=saved_image if actual_picture_type == "annotated" else None,
         )
+    if crop_output_path is not None:
+        write_crop_output(crop_output_path, cropped)
     value = ocr_func(prepared)
     append_csv_row(csv_path, ts, value)
+    if postgres_writer is not None:
+        postgres_writer.persist(ts, value)
     return image_path, value, ts
 
 
@@ -610,6 +740,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "cycle. The first live capture is always persisted."
         ),
     )
+    schedule_group.add_argument(
+        "--crop-output",
+        type=Path,
+        help=(
+            "Also write the current cropped OCR region to this fixed file path on each live capture cycle. "
+            "Requires crop coordinates."
+        ),
+    )
 
     crop_group = parser.add_argument_group("crop and OCR")
     crop_group.add_argument("--x1", type=int, help="Left X coordinate of the OCR crop rectangle.")
@@ -639,6 +777,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--debug-output",
         type=Path,
         help="Directory where debug artifacts such as annotated, cropped, and OCR-input images are written.",
+    )
+
+    postgres_group = parser.add_argument_group("postgres output")
+    postgres_group.add_argument(
+        "--pg-write",
+        action="store_true",
+        help=(
+            "Insert successful OCR readings into the Water Meter PostgreSQL table `meter_readings` in addition to "
+            "writing CSV rows."
+        ),
+    )
+    postgres_group.add_argument(
+        "--pg-database-url",
+        help="PostgreSQL connection string. Defaults to the `DATABASE_URL` environment variable when set.",
+    )
+    postgres_group.add_argument(
+        "--pg-source",
+        default="reader",
+        help="Value written into the `source` column for PostgreSQL inserts.",
+    )
+    postgres_group.add_argument(
+        "--pg-value-mode",
+        choices=POSTGRES_VALUE_MODES,
+        default="truncate",
+        help=(
+            "How OCR values map into Water Meter's integer `meter_value_m3` column: `truncate` drops the fraction, "
+            "`round` uses half-up rounding, and `reject` fails on fractional OCR output."
+        ),
     )
     return parser
 
@@ -703,6 +869,14 @@ def parse_debug_output(args: argparse.Namespace, parser: argparse.ArgumentParser
     return args.debug_output
 
 
+def parse_crop_output(args: argparse.Namespace, crop_rect: CropRect | None, parser: argparse.ArgumentParser) -> Path | None:
+    if args.crop_output is None:
+        return None
+    if crop_rect is None:
+        parser.error("--crop-output requires crop coordinates")
+    return args.crop_output
+
+
 def parse_camera_source(args: argparse.Namespace, parser: argparse.ArgumentParser) -> CameraSource:
     if args.camera_source == "usb":
         if args.ip_camera_url is not None:
@@ -713,6 +887,26 @@ def parse_camera_source(args: argparse.Namespace, parser: argparse.ArgumentParse
         parser.error("--ip-camera-url is required when using --source ip")
 
     return CameraSource("ip", args.ip_camera_url)
+
+
+def parse_postgres_target(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> PostgresTarget | None:
+    if not args.pg_write:
+        return None
+
+    database_url = args.pg_database_url or os.environ.get("DATABASE_URL")
+    if not database_url:
+        parser.error("--pg-write requires --pg-database-url or the DATABASE_URL environment variable")
+    if not args.pg_source.strip():
+        parser.error("--pg-source must not be empty")
+
+    return PostgresTarget(
+        database_url=database_url,
+        source=args.pg_source,
+        value_mode=args.pg_value_mode,
+    )
 
 
 def open_camera(camera_source: CameraSource) -> cv2.VideoCapture:
@@ -782,7 +976,14 @@ def main(argv: list[str] | None = None) -> int:
     crop_rect = parse_crop_rect(args, parser)
     debug_picture = parse_debug_picture(args, parser)
     debug_output_dir = parse_debug_output(args, parser)
+    crop_output_path = parse_crop_output(args, crop_rect, parser)
     validate_picture_type_options(debug_picture, args.picture_type, crop_rect, parser)
+    postgres_target = parse_postgres_target(args, parser)
+
+    if debug_picture is not None and postgres_target is not None:
+        parser.error("--pg-write is only supported in live capture mode")
+    if debug_picture is not None and crop_output_path is not None:
+        parser.error("--crop-output is only supported in live capture mode")
 
     if args.interval_seconds <= 0:
         parser.error("--interval-seconds must be greater than 0")
@@ -791,6 +992,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         ensure_runtime_dependencies()
+        if postgres_target is not None:
+            ensure_postgres_dependencies()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -811,9 +1014,18 @@ def main(argv: list[str] | None = None) -> int:
     camera_source = parse_camera_source(args, parser)
 
     camera: cv2.VideoCapture | None = None
+    postgres_writer: PostgresWriter | None = None
     if camera_source.kind == "usb":
         try:
             camera = open_camera(camera_source)
+        except RuntimeError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+
+    if postgres_target is not None:
+        try:
+            postgres_writer = PostgresWriter(postgres_target)
+            postgres_writer.connect()
         except RuntimeError as exc:
             print(exc, file=sys.stderr)
             return 1
@@ -822,8 +1034,8 @@ def main(argv: list[str] | None = None) -> int:
         "Starting capture loop "
         f"(source={format_camera_source(camera_source)}, interval={args.interval_seconds}s, "
         f"pictures_dir={args.pictures_dir}, csv={args.csv_file}, crop={crop_rect}, "
-        f"picture_type={args.picture_type}, persist_every={args.persist_every}, "
-        f"debug_output={debug_output_dir})"
+        f"picture_type={args.picture_type}, persist_every={args.persist_every}, crop_output={crop_output_path}, "
+        f"debug_output={debug_output_dir}, postgres={format_postgres_target(postgres_target) if postgres_target is not None else 'disabled'})"
     )
 
     capture_count = 0
@@ -840,6 +1052,8 @@ def main(argv: list[str] | None = None) -> int:
                     picture_type=args.picture_type,
                     debug_output_dir=debug_output_dir,
                     persist_image=persist_image,
+                    crop_output_path=crop_output_path,
+                    postgres_writer=postgres_writer,
                 )
                 capture_count += 1
                 stamp = ts.strftime("%Y-%m-%d %H:%M:%S")
@@ -869,6 +1083,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if camera is not None:
             camera.release()
+        if postgres_writer is not None:
+            postgres_writer.close()
 
     return 0
 
