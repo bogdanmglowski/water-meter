@@ -72,6 +72,8 @@ Responsibilities:
 - run PostgreSQL, the backend API, and the frontend client together
 - provide the SQL seed used for test and demo data
 
+`psql postgresql://meter:meter@localhost:5432/water_meter`
+
 Important files:
 - [infra/docker-compose.yml](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/docker-compose.yml)
 - [infra/db/seed.sql](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/db/seed.sql)
