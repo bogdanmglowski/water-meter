@@ -61,6 +61,20 @@ function pageFromHash(hash: string): AppPage {
   return hash === "#raw-readings" ? "raw-readings" : "time-series";
 }
 
+function chartAxisLine() {
+  return {
+    lineStyle: {
+      color: "#3a3a3f",
+    },
+  };
+}
+
+function chartAxisLabel() {
+  return {
+    color: "#6b7280",
+  };
+}
+
 export default function App() {
   const readingsPerPage = 30;
   const [page, setPage] = useState<AppPage>(() => pageFromHash(window.location.hash));
@@ -97,6 +111,7 @@ export default function App() {
   const tzOffsetMinutes = -new Date().getTimezoneOffset();
   const isDashboardPage = page === "dashboard";
   const isTimeSeriesPage = page === "time-series";
+  const activePageMeta = pages.find((item) => item.value === page) ?? pages[0];
   const activeRange = buildRange(preset, rangeEnd);
   const baselineRange = buildRange("30d", rangeEnd);
   const activePresetLabel =
@@ -172,7 +187,7 @@ export default function App() {
       alertsQuery.error
     : isDashboardPage
       ? dashboardQuery.error
-    : readingsQuery.error;
+      : readingsQuery.error;
 
   const dailySeries = baselineQuery.data ?? [];
   const dailyBaseline = rollingAverage(dailySeries, 7);
@@ -189,22 +204,34 @@ export default function App() {
   }, [totalReadingPages]);
 
   const cumulativeOption: WaterMeterChartOption = {
-    tooltip: { trigger: "axis" },
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#14151a",
+      borderColor: "#3a3a3f",
+      textStyle: { color: "#e5e7eb" },
+    },
     grid: { left: 48, right: 20, top: 24, bottom: 40 },
-    xAxis: { type: "time" },
+    xAxis: {
+      type: "time",
+      axisLabel: chartAxisLabel(),
+      axisLine: chartAxisLine(),
+    },
     yAxis: {
       type: "value",
       name: "m³",
-      splitLine: { lineStyle: { color: "rgba(15, 93, 74, 0.15)" } },
+      nameTextStyle: chartAxisLabel(),
+      axisLabel: chartAxisLabel(),
+      splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
       {
         type: "line",
         smooth: true,
         showSymbol: false,
-        lineStyle: { width: 3, color: "#0f5d4a" },
+        lineStyle: { width: 3, color: "#f472b6" },
         areaStyle: {
-          color: "rgba(15, 93, 74, 0.14)",
+          color: "rgba(244, 114, 182, 0.12)",
         },
         data: (cumulativeQuery.data ?? []).map((point) => [
           point.recordedAt,
@@ -215,11 +242,18 @@ export default function App() {
   };
 
   const consumptionOption: WaterMeterChartOption = {
-    tooltip: { trigger: "axis" },
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#14151a",
+      borderColor: "#3a3a3f",
+      textStyle: { color: "#e5e7eb" },
+    },
     grid: { left: 48, right: 20, top: 24, bottom: 56 },
     xAxis: {
       type: "category",
-      axisLabel: { rotate: 30 },
+      axisLabel: { ...chartAxisLabel(), rotate: 30 },
+      axisLine: chartAxisLine(),
       data: (consumptionQuery.data ?? []).map((point) =>
         formatBucketLabel(point.bucketStart, point.bucketEnd),
       ),
@@ -227,14 +261,16 @@ export default function App() {
     yAxis: {
       type: "value",
       name: "m³",
-      splitLine: { lineStyle: { color: "rgba(133, 87, 35, 0.14)" } },
+      nameTextStyle: chartAxisLabel(),
+      axisLabel: chartAxisLabel(),
+      splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
       {
         type: "bar",
         barMaxWidth: 28,
         itemStyle: {
-          color: "#c8752f",
+          color: "#ec4899",
           borderRadius: [8, 8, 2, 2],
         },
         data: (consumptionQuery.data ?? []).map((point) => point.consumptionM3),
@@ -243,18 +279,32 @@ export default function App() {
   };
 
   const baselineOption: WaterMeterChartOption = {
-    tooltip: { trigger: "axis" },
-    legend: { top: 0 },
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#14151a",
+      borderColor: "#3a3a3f",
+      textStyle: { color: "#e5e7eb" },
+    },
+    legend: {
+      top: 0,
+      textStyle: {
+        color: "#e5e7eb",
+      },
+    },
     grid: { left: 48, right: 20, top: 48, bottom: 56 },
     xAxis: {
       type: "category",
-      axisLabel: { rotate: 30 },
+      axisLabel: { ...chartAxisLabel(), rotate: 30 },
+      axisLine: chartAxisLine(),
       data: dailySeries.map((point) => formatBucketLabel(point.bucketStart, point.bucketEnd)),
     },
     yAxis: {
       type: "value",
       name: "m³",
-      splitLine: { lineStyle: { color: "rgba(44, 73, 115, 0.14)" } },
+      nameTextStyle: chartAxisLabel(),
+      axisLabel: chartAxisLabel(),
+      splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
       {
@@ -262,8 +312,8 @@ export default function App() {
         type: "line",
         smooth: true,
         showSymbol: false,
-        lineStyle: { width: 3, color: "#244973" },
-        areaStyle: { color: "rgba(36, 73, 115, 0.12)" },
+        lineStyle: { width: 3, color: "#22d3ee" },
+        areaStyle: { color: "rgba(34, 211, 238, 0.08)" },
         data: dailySeries.map((point) => point.consumptionM3),
       },
       {
@@ -271,33 +321,44 @@ export default function App() {
         type: "line",
         smooth: true,
         showSymbol: false,
-        lineStyle: { width: 2, type: "dashed", color: "#7ea3c7" },
+        lineStyle: { width: 2, type: "dashed", color: "#c084fc" },
         data: dailyBaseline,
       },
     ],
   };
 
   const rangeSummary = `${formatTimestamp(activeRange.from)} to ${formatTimestamp(activeRange.to)}`;
+  const currentSectionTitle = isDashboardPage
+    ? "Current meter state"
+    : isTimeSeriesPage
+      ? "Analytical window"
+      : "Cumulative feed";
+
   return (
     <main className="page-shell">
+      <div className="page-noise" />
+      <div className="page-glow page-glow--pink" />
+      <div className="page-glow page-glow--violet" />
       <div className="page-bg" />
       <div className="page">
         <header className="topbar">
           <div className="topbar__main">
-            <div>
-              <span className="eyebrow">Self-hosted analytics</span>
-              <h1>Water Meter</h1>
+            <div className="brand-block">
+              <span className="eyebrow">Synthwave water lab</span>
+              <h1>
+                Water <span>Meter</span>
+              </h1>
               <p>
                 {isDashboardPage
-                  ? "Start with the current meter state and the headline water-usage totals."
+                  ? "A cumulative meter feed rendered as a neon control room for live household usage."
                   : isTimeSeriesPage
-                  ? "Browse time-series windows, compare bucketed usage, and review alert signals."
-                  : "Inspect the raw cumulative meter feed without chart aggregation in the way."}
+                    ? "Inspect bucketed consumption, compare baseline drift, and review alert signatures."
+                    : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it."}
               </p>
             </div>
 
             <nav className="page-nav" aria-label="Subpages">
-              {pages.map((item) => (
+              {pages.map((item, index) => (
                 <a
                   key={item.value}
                   href={`#${item.value}`}
@@ -305,6 +366,7 @@ export default function App() {
                   aria-current={item.value === page ? "page" : undefined}
                   onClick={() => setPage(item.value)}
                 >
+                  <span className="page-nav__index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="page-nav__label">{item.label}</span>
                   <span className="page-nav__detail">{item.detail}</span>
                 </a>
@@ -313,9 +375,32 @@ export default function App() {
           </div>
 
           <div className="status-panel">
-            <span className="status-chip">
-              {isDashboardPage ? "Dashboard" : isTimeSeriesPage ? "Time Series" : "Raw Feed"}
-            </span>
+            <div className="status-panel__header">
+              <span className="status-chip">{activePageMeta.label}</span>
+              <span className="status-panel__mono">tz {tzOffsetMinutes >= 0 ? "+" : ""}{tzOffsetMinutes}m</span>
+            </div>
+            <strong className="status-panel__title">{currentSectionTitle}</strong>
+            <p className="status-panel__text">{activePageMeta.detail}</p>
+            <div className="command-line">
+              <span className="command-line__prompt">$</span>
+              <span className="command-line__text">
+                {isDashboardPage
+                  ? "GET /api/dashboard"
+                  : isTimeSeriesPage
+                    ? `GET /api/series/consumption?bucket=${bucket}`
+                    : "GET /api/readings?limit=2000"}
+              </span>
+            </div>
+            <div className="status-panel__meta">
+              <div>
+                <span className="label">Range</span>
+                <strong>{activePresetLabel}</strong>
+              </div>
+              <div>
+                <span className="label">Window</span>
+                <strong>{rangeSummary}</strong>
+              </div>
+            </div>
           </div>
         </header>
 
@@ -328,10 +413,14 @@ export default function App() {
 
         {isDashboardPage ? (
           <>
-            <section className="hero-grid hero-grid--single">
+            <section className="hero-grid">
               <div className="hero-card card">
                 <div className="hero-card__copy">
                   <span className="eyebrow">Current meter state</span>
+                  <div className="hero-card__headline">
+                    <span className="hero-card__label">Latest cumulative register</span>
+                    <span className="hero-card__tag">read-only feed</span>
+                  </div>
                   <strong className="hero-card__value">
                     {dashboardQuery.data?.latestReading
                       ? formatVolume(dashboardQuery.data.latestReading.meterValueM3)
@@ -344,14 +433,48 @@ export default function App() {
                         )}`
                       : "Seed the database or connect your external reader."}
                   </p>
+                  <div className="hero-card__ledger">
+                    <div className="hero-card__ledger-row">
+                      <span className="label">Source</span>
+                      <span className="hero-card__mono">
+                        {dashboardQuery.data?.latestReading?.source ?? "n/a"}
+                      </span>
+                    </div>
+                    <div className="hero-card__ledger-row">
+                      <span className="label">Alert count</span>
+                      <span className="hero-card__mono">
+                        {dashboardQuery.data?.summary.activeAlerts ?? 0}
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <div className="hero-card__summary">
-                  <span className="label">Recent anomalies</span>
-                  <strong>{dashboardQuery.data?.summary.anomalyCount ?? 0}</strong>
-                  <span className="label">Active alerts</span>
-                  <strong>{dashboardQuery.data?.summary.activeAlerts ?? 0}</strong>
+                  <div>
+                    <span className="label">Recent anomalies</span>
+                    <strong>{dashboardQuery.data?.summary.anomalyCount ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span className="label">Active alerts</span>
+                    <strong>{dashboardQuery.data?.summary.activeAlerts ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span className="label">Month to date</span>
+                    <strong>{formatVolume(dashboardQuery.data?.summary.monthToDateM3 ?? 0)}</strong>
+                  </div>
                 </div>
               </div>
+
+              <aside className="card sidekick-card">
+                <div className="sidekick-card__header">
+                  <span className="eyebrow">Signal notes</span>
+                  <span className="count-pill">v1</span>
+                </div>
+                <ul className="signal-list">
+                  <li>Consumption is derived from cumulative deltas only.</li>
+                  <li>Negative jumps are preserved as anomalies instead of hidden.</li>
+                  <li>Timezone boundaries follow the browser offset sent to the API.</li>
+                </ul>
+              </aside>
             </section>
 
             <section className="metric-grid">
@@ -381,57 +504,78 @@ export default function App() {
           </>
         ) : isTimeSeriesPage ? (
           <>
-            <section className="card page-intro">
-              <div className="section-head">
-                <div>
-                  <span className="eyebrow">Time Series</span>
-                  <h2>Choose a window and bucket</h2>
-                  <p>
-                    Move from short hourly views to broader monthly or yearly summaries without
-                    leaving the charts page.
-                  </p>
+            <section className="page-intro-grid">
+              <div className="card page-intro">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">Time Series</span>
+                    <h2>Choose a window and bucket</h2>
+                    <p>
+                      Move from short hourly views to broader monthly or yearly summaries without
+                      leaving the charts page.
+                    </p>
+                  </div>
                 </div>
+
+                <div className="control-group">
+                  <span className="label">Range</span>
+                  <div className="segmented">
+                    {presets.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        className={item.value === preset ? "is-active" : ""}
+                        onClick={() => {
+                          setRangeEnd(new Date());
+                          setPreset(item.value);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="control-group">
+                  <span className="label">Buckets</span>
+                  <div className="segmented segmented--compact">
+                    {buckets.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        className={item.value === bucket ? "is-active" : ""}
+                        onClick={() => setBucket(item.value)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="range-meta">
+                  {activePresetLabel} selected. Interval consumption is grouped as{" "}
+                  {activeBucketLabel.toLowerCase()} buckets for {rangeSummary}.
+                </p>
               </div>
 
-              <div className="control-group">
-                <span className="label">Range</span>
-                <div className="segmented">
-                  {presets.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      className={item.value === preset ? "is-active" : ""}
-                      onClick={() => {
-                        setRangeEnd(new Date());
-                        setPreset(item.value);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+              <aside className="card inspector-card">
+                <span className="eyebrow">Inspector</span>
+                <h2>{activeBucketLabel} lens</h2>
+                <p>
+                  Use the cumulative trend to spot resets, the grouped bars to locate bursts, and
+                  the baseline overlay to judge whether the period is noisy or normal.
+                </p>
+                <div className="inspector-card__stats">
+                  <div>
+                    <span className="label">Alerts</span>
+                    <strong>{alertsQuery.data?.length ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span className="label">Points</span>
+                    <strong>{consumptionQuery.data?.length ?? 0}</strong>
+                  </div>
                 </div>
-              </div>
-
-              <div className="control-group">
-                <span className="label">Buckets</span>
-                <div className="segmented segmented--compact">
-                  {buckets.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      className={item.value === bucket ? "is-active" : ""}
-                      onClick={() => setBucket(item.value)}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <p className="range-meta">
-                {activePresetLabel} selected. Interval consumption is grouped as{" "}
-                {activeBucketLabel.toLowerCase()} buckets for {rangeSummary}.
-              </p>
+              </aside>
             </section>
 
             <section className="grid-two">
