@@ -68,5 +68,39 @@ services:
     ports:
       - "${CLIENT_PORT:-5173}:80"
 
+  reader:
+    profiles: ["reader"]
+    build:
+      context: ../reader
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-meter}:${POSTGRES_PASSWORD:-meter}@db:5432/${POSTGRES_DB:-water_meter}
+      READER_SOURCE: ${READER_SOURCE:-usb}
+      READER_CAMERA_INDEX: ${READER_CAMERA_INDEX:-0}
+      READER_IP_CAMERA_URL: ${READER_IP_CAMERA_URL:-}
+      READER_INTERVAL_SECONDS: ${READER_INTERVAL_SECONDS:-5}
+      READER_PICTURES_DIR: /data/pictures
+      READER_CSV_FILE: /data/readings.csv
+      READER_PERSIST_EVERY: ${READER_PERSIST_EVERY:-1}
+      READER_PICTURE_TYPE: ${READER_PICTURE_TYPE:-auto}
+      READER_CROP_OUTPUT: ${READER_CROP_OUTPUT:-/data/meter-crop.png}
+      READER_DEBUG_OUTPUT: ${READER_DEBUG_OUTPUT:-}
+      READER_X1: ${READER_X1:-159}
+      READER_Y1: ${READER_Y1:-331}
+      READER_X2: ${READER_X2:-565}
+      READER_Y2: ${READER_Y2:-414}
+      READER_PG_WRITE: ${READER_PG_WRITE:-true}
+      READER_PG_SOURCE: ${READER_PG_SOURCE:-reader-docker}
+      READER_PG_VALUE_MODE: ${READER_PG_VALUE_MODE:-truncate}
+    command: ["/app/docker-run.sh"]
+    volumes:
+      - ../reader/runtime:/data
+    devices:
+      - "${READER_VIDEO_DEVICE:-/dev/video0}:${READER_VIDEO_DEVICE:-/dev/video0}"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   water-meter-pg:

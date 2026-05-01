@@ -7,7 +7,7 @@ ENV_FILE="${ROOT_DIR}/.env.production"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/deploy.sh [up|down|restart|logs|ps|config|pull] [--demo]
+Usage: ./scripts/deploy.sh [up|down|restart|logs|ps|config|pull] [--demo] [--reader]
 
 Commands:
   up       Build and start the deployment stack in the background
@@ -20,11 +20,13 @@ Commands:
 
 Flags:
   --demo   Enable demo seeding for an empty database
+  --reader Enable the Reader service profile
 EOF
 }
 
 command="up"
 demo_seed="false"
+reader_enabled="false"
 
 if [[ $# -gt 0 ]]; then
   case "$1" in
@@ -43,6 +45,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --demo)
       demo_seed="true"
+      ;;
+    --reader)
+      reader_enabled="true"
       ;;
     -h|--help)
       usage
@@ -63,7 +68,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 compose() {
-  SEED_DEMO_DATA="$demo_seed" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  compose_profiles=""
+  if [[ "$reader_enabled" == "true" ]]; then
+    compose_profiles="reader"
+  fi
+  SEED_DEMO_DATA="$demo_seed" COMPOSE_PROFILES="$compose_profiles" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 case "$command" in
