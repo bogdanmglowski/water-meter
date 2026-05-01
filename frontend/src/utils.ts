@@ -30,13 +30,25 @@ const weekdayDate = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
 });
 
-export function buildRange(preset: RangePreset) {
-  const now = new Date();
+const monthYear = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  year: "numeric",
+});
+
+const yearOnly = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+});
+
+export function buildRange(preset: RangePreset, end = new Date()) {
+  const now = new Date(end);
   const start = new Date(now);
 
   switch (preset) {
     case "24h":
       start.setHours(start.getHours() - 24);
+      break;
+    case "3d":
+      start.setDate(start.getDate() - 3);
       break;
     case "7d":
       start.setDate(start.getDate() - 7);
@@ -46,6 +58,9 @@ export function buildRange(preset: RangePreset) {
       break;
     case "90d":
       start.setDate(start.getDate() - 90);
+      break;
+    case "365d":
+      start.setDate(start.getDate() - 365);
       break;
   }
 
@@ -147,16 +162,29 @@ export function formatBucketLabel(bucketStart: unknown, bucketEnd: unknown) {
   }
 
   const diffHours = Math.round((end.getTime() - start.getTime()) / 3_600_000);
+  const diffDays = diffHours / 24;
 
   if (diffHours <= 1) {
     return dtf.format(start);
   }
 
-  if (diffHours <= 24) {
+  if (diffDays <= 2) {
     return shortDate.format(start);
   }
 
-  return weekdayDate.format(start);
+  if (diffDays <= 14) {
+    return weekdayDate.format(start);
+  }
+
+  if (diffDays <= 45) {
+    return monthYear.format(start);
+  }
+
+  if (diffDays <= 370) {
+    return monthYear.format(start);
+  }
+
+  return yearOnly.format(start);
 }
 
 export function rollingAverage(points: UsagePoint[], windowSize: number) {

@@ -1,5 +1,5 @@
-export type RangePreset = "24h" | "7d" | "30d" | "90d";
-export type Bucket = "hour" | "day" | "week" | "month";
+export type RangePreset = "24h" | "3d" | "7d" | "30d" | "90d" | "365d";
+export type Bucket = "hour" | "day" | "week" | "month" | "year";
 export type AlertSeverity = "info" | "medium" | "high";
 
 export interface Reading {
@@ -41,4 +41,3 @@ export interface DashboardResponse {
   summary: DashboardSummary;
   latestReading: Reading | null;
 }
-
