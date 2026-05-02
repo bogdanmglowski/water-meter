@@ -28,6 +28,27 @@ export function ReadingsTable({
 }: ReadingsTableProps) {
   const pageStart = totalReadings === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const pageEnd = totalReadings === 0 ? 0 : pageStart + readings.length - 1;
+  const paginationControls = (className?: string) => (
+    <div className={className ? `table-pagination ${className}` : "table-pagination"}>
+      <button
+        type="button"
+        onClick={onPreviousPage}
+        disabled={isDeletePending || currentPage === 1}
+      >
+        Previous
+      </button>
+      <span className="table-pagination__status">
+        Page {currentPage} of {totalPages}
+      </span>
+      <button
+        type="button"
+        onClick={onNextPage}
+        disabled={isDeletePending || currentPage === totalPages}
+      >
+        Next
+      </button>
+    </div>
+  );
 
   return (
     <section className="card">
@@ -42,6 +63,8 @@ export function ReadingsTable({
           </div>
         ) : null}
       </div>
+
+      {totalReadings > 0 ? paginationControls("table-pagination--top") : null}
 
       {readings.length === 0 ? (
         <div className="empty-state">
@@ -84,27 +107,7 @@ export function ReadingsTable({
         </div>
       )}
 
-      {totalReadings > 0 ? (
-        <div className="table-pagination">
-            <button
-              type="button"
-              onClick={onPreviousPage}
-              disabled={isDeletePending || currentPage === 1}
-            >
-              Previous
-            </button>
-          <span className="table-pagination__status">
-            Page {currentPage} of {totalPages}
-          </span>
-            <button
-              type="button"
-              onClick={onNextPage}
-              disabled={isDeletePending || currentPage === totalPages}
-            >
-              Next
-            </button>
-        </div>
-      ) : null}
+      {totalReadings > 0 ? paginationControls() : null}
     </section>
   );
 }

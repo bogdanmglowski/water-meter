@@ -772,6 +772,10 @@ a:focus-visible {
   margin-top: 1rem;
 }
 
+.table-pagination--top {
+  margin-bottom: 20px;
+}
+
 .table-pagination button {
   padding: 0.72rem 0.95rem;
   border-radius: 8px;
