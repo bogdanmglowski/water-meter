@@ -41,6 +41,7 @@ const yearOnly = new Intl.DateTimeFormat(undefined, {
 
 export function buildRange(preset: RangePreset, end = new Date()) {
   const now = new Date(end);
+  now.setSeconds(0, 0);
   const start = new Date(now);
 
   switch (preset) {
@@ -76,6 +77,26 @@ export function formatVolume(value: number) {
 
 function isValidDate(value: Date) {
   return !Number.isNaN(value.getTime());
+}
+
+function isoFallback(value: Date) {
+  try {
+    return value.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function safeFormatDate(formatter: Intl.DateTimeFormat, value: Date) {
+  if (!isValidDate(value)) {
+    return null;
+  }
+
+  try {
+    return formatter.format(value);
+  } catch {
+    return isoFallback(value);
+  }
 }
 
 function parseLegacyOffsetDateTime(value: readonly unknown[]) {
@@ -151,7 +172,22 @@ export function toIsoTimestamp(value: unknown) {
 
 export function formatTimestamp(value: unknown) {
   const parsed = parseTimestamp(value);
-  return parsed ? dtf.format(parsed) : "Unknown time";
+  return parsed ? safeFormatDate(dtf, parsed) ?? "Unknown time" : "Unknown time";
+}
+
+export function formatDateTimeInput(value: unknown) {
+  const parsed = parseTimestamp(value);
+  if (!parsed) {
+    return "";
+  }
+
+  const year = String(parsed.getFullYear());
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hour = String(parsed.getHours()).padStart(2, "0");
+  const minute = String(parsed.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
 export function formatBucketLabel(bucketStart: unknown, bucketEnd: unknown) {
@@ -165,26 +201,26 @@ export function formatBucketLabel(bucketStart: unknown, bucketEnd: unknown) {
   const diffDays = diffHours / 24;
 
   if (diffHours <= 1) {
-    return dtf.format(start);
+    return safeFormatDate(dtf, start) ?? "Unknown period";
   }
 
   if (diffDays <= 2) {
-    return shortDate.format(start);
+    return safeFormatDate(shortDate, start) ?? "Unknown period";
   }
 
   if (diffDays <= 14) {
-    return weekdayDate.format(start);
+    return safeFormatDate(weekdayDate, start) ?? "Unknown period";
   }
 
   if (diffDays <= 45) {
-    return monthYear.format(start);
+    return safeFormatDate(monthYear, start) ?? "Unknown period";
   }
 
   if (diffDays <= 370) {
-    return monthYear.format(start);
+    return safeFormatDate(monthYear, start) ?? "Unknown period";
   }
 
-  return yearOnly.format(start);
+  return safeFormatDate(yearOnly, start) ?? "Unknown period";
 }
 
 export function rollingAverage(points: UsagePoint[], windowSize: number) {

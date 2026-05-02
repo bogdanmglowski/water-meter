@@ -597,6 +597,89 @@ a:focus-visible {
   text-transform: capitalize;
 }
 
+.range-filter {
+  margin-top: 0.25rem;
+}
+
+.range-input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.range-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.range-field__label {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-virtual-violet);
+}
+
+.range-field input,
+.range-apply-button {
+  border: 1px solid rgba(58, 58, 63, 0.95);
+  border-radius: 8px;
+  background: rgba(40, 42, 54, 0.86);
+  color: var(--color-silver-text);
+}
+
+.range-field input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.82rem 1rem;
+}
+
+.range-field input::-webkit-calendar-picker-indicator {
+  filter: invert(0.88);
+  cursor: pointer;
+}
+
+.range-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.range-apply-button {
+  padding: 0.82rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.range-apply-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(244, 114, 182, 0.4);
+}
+
+.range-hint,
+.range-error {
+  margin: 0;
+}
+
+.range-hint {
+  color: var(--color-silver-text);
+  opacity: 0.78;
+}
+
+.range-error {
+  color: var(--color-danger-red);
+}
+
 .range-meta {
   font-size: 0.96rem;
 }
@@ -854,6 +937,10 @@ a:focus-visible {
   .inspector-card__stats,
   .status-panel__meta {
     flex-direction: column;
+  }
+
+  .range-input-grid {
+    grid-template-columns: 1fr;
   }
 
   .status-panel__meta > div,

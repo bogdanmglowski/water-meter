@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getAlerts, getConsumption, getCumulative, getDashboard, getReadings } from "./api";
@@ -11,10 +11,22 @@ import type { Bucket, RangePreset, UsagePoint } from "./types";
 import {
   buildRange,
   formatBucketLabel,
+  formatDateTimeInput,
   formatTimestamp,
   formatVolume,
   rollingAverage,
+  toIsoTimestamp,
 } from "./utils";
+
+interface AppliedRange {
+  from: string;
+  to: string;
+}
+
+interface RangeInputs {
+  from: string;
+  to: string;
+}
 
 type AppPage =
   | "dashboard"
@@ -42,7 +54,7 @@ const pages = [
   {
     value: "daily-baseline" as const,
     label: "Daily Baseline",
-    detail: "Thirty-day daily totals against a rolling average.",
+    detail: "Daily totals against a rolling average for the selected window.",
   },
   {
     value: "raw-readings" as const,
@@ -101,13 +113,27 @@ function chartAxisLabel() {
   };
 }
 
+function rangeToInputs(range: AppliedRange): RangeInputs {
+  return {
+    from: formatDateTimeInput(range.from),
+    to: formatDateTimeInput(range.to),
+  };
+}
+
 export default function App() {
   const readingsPerPage = 30;
   const [page, setPage] = useState<AppPage>(() => pageFromHash(window.location.hash));
   const [preset, setPreset] = useState<RangePreset>("30d");
   const [bucket, setBucket] = useState<Bucket>("day");
   const [rangeEnd, setRangeEnd] = useState(() => new Date());
+  const [customRange, setCustomRange] = useState<AppliedRange | null>(null);
+  const [rangeInputs, setRangeInputs] = useState<RangeInputs>(() =>
+    rangeToInputs(buildRange("30d")),
+  );
+  const [isEditingRange, setIsEditingRange] = useState(false);
+  const [rangeError, setRangeError] = useState<string | null>(null);
   const [readingsPage, setReadingsPage] = useState(1);
+  const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
   useEffect(() => {
     const syncPage = () => {
@@ -131,8 +157,80 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (customRange || isEditingRange) {
+      return;
+    }
+
+    setRangeInputs(rangeToInputs(activeRange));
+  }, [customRange, isEditingRange, activeRange.from, activeRange.to]);
+
+  useEffect(() => {
     setReadingsPage(1);
   }, [page, preset]);
+
+  function handlePresetChange(nextPreset: RangePreset) {
+    const nextEnd = new Date();
+    const nextRange = buildRange(nextPreset, nextEnd);
+
+    setPreset(nextPreset);
+    setCustomRange(null);
+    setRangeEnd(nextEnd);
+    setRangeInputs(rangeToInputs(nextRange));
+    setIsEditingRange(false);
+    setRangeError(null);
+    setReadingsPage(1);
+  }
+
+  function handleRangeInputChange(field: keyof RangeInputs, value: string) {
+    setIsEditingRange(true);
+    setRangeInputs((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setRangeError(null);
+  }
+
+  function handleApplyRange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const from = toIsoTimestamp(rangeInputs.from);
+    const to = toIsoTimestamp(rangeInputs.to);
+
+    if (!from || !to) {
+      setRangeError("Enter both start and end date/time values.");
+      return;
+    }
+
+    const fromDate = new Date(rangeInputs.from);
+    const toDate = new Date(rangeInputs.to);
+    const now = new Date();
+    now.setSeconds(0, 0);
+    const fromMillis = fromDate.getTime();
+    const toMillis = toDate.getTime();
+
+    if (fromMillis >= toMillis) {
+      setRangeError("Start date/time must be earlier than end date/time.");
+      return;
+    }
+
+    if (fromDate > now || toDate > now) {
+      setRangeError("Date/time range cannot extend into the future.");
+      return;
+    }
+
+    const maxTo = new Date(fromDate);
+    maxTo.setFullYear(maxTo.getFullYear() + 1);
+
+    if (toDate > maxTo) {
+      setRangeError("Custom range cannot exceed one year.");
+      return;
+    }
+
+    setCustomRange({ from, to });
+    setIsEditingRange(false);
+    setRangeError(null);
+    setReadingsPage(1);
+  }
 
   const tzOffsetMinutes = -new Date().getTimezoneOffset();
   const isDashboardPage = page === "dashboard";
@@ -141,12 +239,16 @@ export default function App() {
   const isBaselinePage = page === "daily-baseline";
   const isChartPage = isCumulativePage || isConsumptionPage || isBaselinePage;
   const activePageMeta = pages.find((item) => item.value === page) ?? pages[0];
-  const activeRange = buildRange(preset, rangeEnd);
-  const baselineRange = buildRange("30d", rangeEnd);
   const activePresetLabel =
     presets.find((option) => option.value === preset)?.label ?? "Selected range";
   const activeBucketLabel =
     buckets.find((option) => option.value === bucket)?.label ?? "Selected bucket";
+  const activeRangeLabel = customRange ? "Custom range" : activePresetLabel;
+  const latestSelectableDateTime = formatDateTimeInput(new Date());
+  const maxFromInput =
+    rangeInputs.to && rangeInputs.to < latestSelectableDateTime
+      ? rangeInputs.to
+      : latestSelectableDateTime;
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", tzOffsetMinutes],
@@ -176,10 +278,10 @@ export default function App() {
   });
 
   const baselineQuery = useQuery({
-    queryKey: ["baseline", baselineRange.from, baselineRange.to, tzOffsetMinutes],
+    queryKey: ["baseline", activeRange.from, activeRange.to, tzOffsetMinutes],
     queryFn: () =>
       getConsumption({
-        ...baselineRange,
+        ...activeRange,
         bucket: "day",
         tzOffsetMinutes,
       }),
@@ -372,17 +474,12 @@ export default function App() {
   };
 
   const activeRangeSummary = `${formatTimestamp(activeRange.from)} to ${formatTimestamp(activeRange.to)}`;
-  const baselineRangeSummary = `${formatTimestamp(baselineRange.from)} to ${formatTimestamp(baselineRange.to)}`;
   const statusRangeLabel = isDashboardPage
     ? "Live summary"
-    : isBaselinePage
-      ? "Last 30 days"
-      : activePresetLabel;
+    : activeRangeLabel;
   const statusWindowSummary = isDashboardPage
     ? "Today, last 24h, last 7d, month to date"
-    : isBaselinePage
-      ? baselineRangeSummary
-      : activeRangeSummary;
+    : activeRangeSummary;
   const currentSectionTitle = isDashboardPage
     ? "Current meter state"
     : isCumulativePage
@@ -399,7 +496,7 @@ export default function App() {
       : isConsumptionPage
         ? "Study grouped consumption bursts across hourly to yearly buckets."
         : isBaselinePage
-          ? "Compare the latest 30 days of daily usage against a rolling seven-day average."
+          ? "Compare daily usage for the selected window against a rolling seven-day average."
           : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it.";
   const statusCommand = isDashboardPage
     ? "GET /api/dashboard"
@@ -410,6 +507,62 @@ export default function App() {
         : isBaselinePage
           ? "GET /api/series/consumption?bucket=day"
           : "GET /api/readings?limit=2000";
+  const rangeControls = (
+    <>
+      <div className="control-group">
+        <span className="label">Presets</span>
+        <div className="segmented">
+          {presets.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={!customRange && item.value === preset ? "is-active" : ""}
+              onClick={() => handlePresetChange(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <form className="control-group range-filter" onSubmit={handleApplyRange}>
+        <span className="label">Date and time</span>
+        <div className="range-input-grid">
+          <label className="range-field">
+            <span className="range-field__label">From</span>
+            <input
+              type="datetime-local"
+              step="60"
+              value={rangeInputs.from}
+              max={maxFromInput || undefined}
+              onChange={(event) => handleRangeInputChange("from", event.target.value)}
+            />
+          </label>
+
+          <label className="range-field">
+            <span className="range-field__label">To</span>
+            <input
+              type="datetime-local"
+              step="60"
+              value={rangeInputs.to}
+              min={rangeInputs.from || undefined}
+              max={latestSelectableDateTime || undefined}
+              onChange={(event) => handleRangeInputChange("to", event.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="range-actions">
+          <button type="submit" className="range-apply-button">
+            Apply range
+          </button>
+          <p className="range-hint">{activeRangeLabel} active. Times use your browser timezone.</p>
+        </div>
+
+        {rangeError ? <p className="range-error">{rangeError}</p> : null}
+      </form>
+    </>
+  );
 
   return (
     <main className="page-shell">
@@ -585,38 +738,19 @@ export default function App() {
                         ? "Follow the cumulative register"
                         : isConsumptionPage
                           ? "Choose a window and bucket"
-                          : "Compare against the rolling baseline"}
+                          : "Compare any window against the rolling baseline"}
                     </h2>
                     <p>
                       {isCumulativePage
                         ? "Inspect the raw cumulative feed across any selected window."
                         : isConsumptionPage
                           ? "Move from short hourly views to broader monthly or yearly summaries."
-                          : "This page always compares the latest 30 days of daily totals against a rolling seven-day average."}
+                          : "This page groups the selected window into daily totals and overlays a rolling seven-day average."}
                     </p>
                   </div>
                 </div>
 
-                {isBaselinePage ? null : (
-                  <div className="control-group">
-                    <span className="label">Range</span>
-                    <div className="segmented">
-                      {presets.map((item) => (
-                        <button
-                          key={item.value}
-                          type="button"
-                          className={item.value === preset ? "is-active" : ""}
-                          onClick={() => {
-                            setRangeEnd(new Date());
-                            setPreset(item.value);
-                          }}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {rangeControls}
 
                 {isConsumptionPage ? (
                   <div className="control-group">
@@ -638,10 +772,10 @@ export default function App() {
 
                 <p className="range-meta">
                   {isCumulativePage
-                    ? `${activePresetLabel} selected. Raw cumulative values span ${activeRangeSummary}.`
+                    ? `${activeRangeLabel} selected. Raw cumulative values span ${activeRangeSummary}.`
                     : isConsumptionPage
-                      ? `${activePresetLabel} selected. Interval consumption is grouped as ${activeBucketLabel.toLowerCase()} buckets for ${activeRangeSummary}.`
-                      : `Baseline view spans ${baselineRangeSummary} using daily totals only.`}
+                      ? `${activeRangeLabel} selected. Interval consumption is grouped as ${activeBucketLabel.toLowerCase()} buckets for ${activeRangeSummary}.`
+                      : `${activeRangeLabel} selected. Daily totals span ${activeRangeSummary}, with a rolling seven-day average overlay.`}
                 </p>
               </div>
 
@@ -652,7 +786,7 @@ export default function App() {
                     ? "Meter register lens"
                     : isConsumptionPage
                       ? `${activeBucketLabel} lens`
-                      : "30-day lens"}
+                      : "Selected window lens"}
                 </h2>
                 <p>
                   {isCumulativePage
@@ -725,7 +859,7 @@ export default function App() {
               {isBaselinePage ? (
                 <ChartCard
                   title="Daily Baseline"
-                  subtitle="Thirty-day actual usage against a rolling seven-day average."
+                  subtitle="Selected-window daily usage against a rolling seven-day average."
                 >
                   <EChart option={baselineOption} height={380} />
                 </ChartCard>
@@ -740,31 +874,14 @@ export default function App() {
                   <span className="eyebrow">Raw Feed</span>
                   <h2>Inspect cumulative readings directly</h2>
                   <p>
-                    Review the exact values stored in PostgreSQL across the same time windows used
-                    by the chart page.
+                    Review the exact values stored in PostgreSQL for the same date/time windows used
+                    by the chart pages.
                   </p>
                 </div>
                 <span className="count-pill">{rawReadings.length}</span>
               </div>
 
-              <div className="control-group">
-                <span className="label">Range</span>
-                <div className="segmented">
-                  {presets.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      className={item.value === preset ? "is-active" : ""}
-                      onClick={() => {
-                        setRangeEnd(new Date());
-                        setPreset(item.value);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              {rangeControls}
 
               <p className="range-meta">
                 Showing up to 2,000 rows for {activeRangeSummary}. Values remain cumulative, not
