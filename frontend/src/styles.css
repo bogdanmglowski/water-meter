@@ -243,7 +243,7 @@ a:focus-visible {
 
 .page-nav {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0.75rem;
 }
 
@@ -397,9 +397,14 @@ a:focus-visible {
 
 .hero-grid,
 .grid-two,
-.page-intro-grid {
+.page-intro-grid,
+.chart-stack {
   display: grid;
   gap: 1rem;
+}
+
+.chart-stack {
+  margin-bottom: 1.5rem;
 }
 
 .hero-grid {

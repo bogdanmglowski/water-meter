@@ -7,7 +7,7 @@ import { ChartCard } from "./components/ChartCard";
 import { EChart, type WaterMeterChartOption } from "./components/EChart";
 import { MetricCard } from "./components/MetricCard";
 import { ReadingsTable } from "./components/ReadingsTable";
-import type { Bucket, RangePreset } from "./types";
+import type { Bucket, RangePreset, UsagePoint } from "./types";
 import {
   buildRange,
   formatBucketLabel,
@@ -16,7 +16,12 @@ import {
   rollingAverage,
 } from "./utils";
 
-type AppPage = "dashboard" | "time-series" | "raw-readings";
+type AppPage =
+  | "dashboard"
+  | "cumulative-trend"
+  | "interval-consumption"
+  | "daily-baseline"
+  | "raw-readings";
 
 const pages = [
   {
@@ -25,9 +30,19 @@ const pages = [
     detail: "Current meter state and headline usage totals.",
   },
   {
-    value: "time-series" as const,
-    label: "Time Series",
-    detail: "Charts, summaries, and alert trends.",
+    value: "cumulative-trend" as const,
+    label: "Cumulative Trend",
+    detail: "Raw cumulative readings over the selected window.",
+  },
+  {
+    value: "interval-consumption" as const,
+    label: "Interval Consumption",
+    detail: "Bucketed usage highlights bursts and quiet periods.",
+  },
+  {
+    value: "daily-baseline" as const,
+    label: "Daily Baseline",
+    detail: "Thirty-day daily totals against a rolling average.",
   },
   {
     value: "raw-readings" as const,
@@ -54,11 +69,22 @@ const buckets = [
 ];
 
 function pageFromHash(hash: string): AppPage {
-  if (hash === "#dashboard" || hash === "") {
-    return "dashboard";
+  switch (hash) {
+    case "":
+    case "#dashboard":
+      return "dashboard";
+    case "#cumulative-trend":
+    case "#time-series":
+      return "cumulative-trend";
+    case "#interval-consumption":
+      return "interval-consumption";
+    case "#daily-baseline":
+      return "daily-baseline";
+    case "#raw-readings":
+      return "raw-readings";
+    default:
+      return "cumulative-trend";
   }
-
-  return hash === "#raw-readings" ? "raw-readings" : "time-series";
 }
 
 function chartAxisLine() {
@@ -110,7 +136,10 @@ export default function App() {
 
   const tzOffsetMinutes = -new Date().getTimezoneOffset();
   const isDashboardPage = page === "dashboard";
-  const isTimeSeriesPage = page === "time-series";
+  const isCumulativePage = page === "cumulative-trend";
+  const isConsumptionPage = page === "interval-consumption";
+  const isBaselinePage = page === "daily-baseline";
+  const isChartPage = isCumulativePage || isConsumptionPage || isBaselinePage;
   const activePageMeta = pages.find((item) => item.value === page) ?? pages[0];
   const activeRange = buildRange(preset, rangeEnd);
   const baselineRange = buildRange("30d", rangeEnd);
@@ -131,7 +160,7 @@ export default function App() {
     queryKey: ["cumulative", activeRange.from, activeRange.to],
     queryFn: () => getCumulative(activeRange),
     staleTime: 60_000,
-    enabled: isTimeSeriesPage,
+    enabled: isCumulativePage,
   });
 
   const consumptionQuery = useQuery({
@@ -143,7 +172,7 @@ export default function App() {
         tzOffsetMinutes,
       }),
     staleTime: 60_000,
-    enabled: isTimeSeriesPage,
+    enabled: isConsumptionPage,
   });
 
   const baselineQuery = useQuery({
@@ -155,7 +184,7 @@ export default function App() {
         tzOffsetMinutes,
       }),
     staleTime: 60_000,
-    enabled: isTimeSeriesPage,
+    enabled: isBaselinePage,
   });
 
   const alertsQuery = useQuery({
@@ -166,7 +195,7 @@ export default function App() {
         tzOffsetMinutes,
       }),
     staleTime: 60_000,
-    enabled: isTimeSeriesPage,
+    enabled: isCumulativePage,
   });
 
   const readingsQuery = useQuery({
@@ -177,20 +206,35 @@ export default function App() {
         limit: 2_000,
       }),
     staleTime: 60_000,
-    enabled: !isTimeSeriesPage,
+    enabled: page === "raw-readings",
   });
 
-  const error = isTimeSeriesPage
-    ? cumulativeQuery.error ||
-      consumptionQuery.error ||
-      baselineQuery.error ||
-      alertsQuery.error
-    : isDashboardPage
-      ? dashboardQuery.error
-      : readingsQuery.error;
+  const error = isDashboardPage
+    ? dashboardQuery.error
+    : isCumulativePage
+      ? cumulativeQuery.error || alertsQuery.error
+      : isConsumptionPage
+        ? consumptionQuery.error
+        : isBaselinePage
+          ? baselineQuery.error
+          : readingsQuery.error;
 
   const dailySeries = baselineQuery.data ?? [];
   const dailyBaseline = rollingAverage(dailySeries, 7);
+  const highestConsumptionPoint = (consumptionQuery.data ?? []).reduce<UsagePoint | null>(
+    (peak, point) => {
+      if (!peak || point.consumptionM3 > peak.consumptionM3) {
+        return point;
+      }
+
+      return peak;
+    },
+    null,
+  );
+  const baselineDaysAboveAverage = dailySeries.reduce((count, point, index) => {
+    const average = dailyBaseline[index] ?? point.consumptionM3;
+    return point.consumptionM3 > average ? count + 1 : count;
+  }, 0);
   const rawReadings = readingsQuery.data ?? [];
   const totalReadingPages = Math.max(1, Math.ceil(rawReadings.length / readingsPerPage));
   const activeReadingsPage = Math.min(readingsPage, totalReadingPages);
@@ -327,12 +371,45 @@ export default function App() {
     ],
   };
 
-  const rangeSummary = `${formatTimestamp(activeRange.from)} to ${formatTimestamp(activeRange.to)}`;
+  const activeRangeSummary = `${formatTimestamp(activeRange.from)} to ${formatTimestamp(activeRange.to)}`;
+  const baselineRangeSummary = `${formatTimestamp(baselineRange.from)} to ${formatTimestamp(baselineRange.to)}`;
+  const statusRangeLabel = isDashboardPage
+    ? "Live summary"
+    : isBaselinePage
+      ? "Last 30 days"
+      : activePresetLabel;
+  const statusWindowSummary = isDashboardPage
+    ? "Today, last 24h, last 7d, month to date"
+    : isBaselinePage
+      ? baselineRangeSummary
+      : activeRangeSummary;
   const currentSectionTitle = isDashboardPage
     ? "Current meter state"
-    : isTimeSeriesPage
-      ? "Analytical window"
-      : "Cumulative feed";
+    : isCumulativePage
+      ? "Cumulative meter trend"
+      : isConsumptionPage
+        ? "Bucketed interval usage"
+        : isBaselinePage
+          ? "Rolling daily baseline"
+          : "Cumulative feed";
+  const pageDescription = isDashboardPage
+    ? "A cumulative meter feed rendered as a neon control room for live household usage."
+    : isCumulativePage
+      ? "Track the raw meter register over time to spot resets, stalls, and sudden jumps."
+      : isConsumptionPage
+        ? "Study grouped consumption bursts across hourly to yearly buckets."
+        : isBaselinePage
+          ? "Compare the latest 30 days of daily usage against a rolling seven-day average."
+          : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it.";
+  const statusCommand = isDashboardPage
+    ? "GET /api/dashboard"
+    : isCumulativePage
+      ? "GET /api/series/cumulative"
+      : isConsumptionPage
+        ? `GET /api/series/consumption?bucket=${bucket}`
+        : isBaselinePage
+          ? "GET /api/series/consumption?bucket=day"
+          : "GET /api/readings?limit=2000";
 
   return (
     <main className="page-shell">
@@ -348,13 +425,7 @@ export default function App() {
               <h1>
                 Water <span>Meter</span>
               </h1>
-              <p>
-                {isDashboardPage
-                  ? "A cumulative meter feed rendered as a neon control room for live household usage."
-                  : isTimeSeriesPage
-                    ? "Inspect bucketed consumption, compare baseline drift, and review alert signatures."
-                    : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it."}
-              </p>
+              <p>{pageDescription}</p>
             </div>
 
             <nav className="page-nav" aria-label="Subpages">
@@ -383,22 +454,16 @@ export default function App() {
             <p className="status-panel__text">{activePageMeta.detail}</p>
             <div className="command-line">
               <span className="command-line__prompt">$</span>
-              <span className="command-line__text">
-                {isDashboardPage
-                  ? "GET /api/dashboard"
-                  : isTimeSeriesPage
-                    ? `GET /api/series/consumption?bucket=${bucket}`
-                    : "GET /api/readings?limit=2000"}
-              </span>
+              <span className="command-line__text">{statusCommand}</span>
             </div>
             <div className="status-panel__meta">
               <div>
                 <span className="label">Range</span>
-                <strong>{activePresetLabel}</strong>
+                <strong>{statusRangeLabel}</strong>
               </div>
               <div>
                 <span className="label">Window</span>
-                <strong>{rangeSummary}</strong>
+                <strong>{statusWindowSummary}</strong>
               </div>
             </div>
           </div>
@@ -502,107 +567,169 @@ export default function App() {
               />
             </section>
           </>
-        ) : isTimeSeriesPage ? (
+        ) : isChartPage ? (
           <>
             <section className="page-intro-grid">
               <div className="card page-intro">
                 <div className="section-head">
                   <div>
-                    <span className="eyebrow">Time Series</span>
-                    <h2>Choose a window and bucket</h2>
+                    <span className="eyebrow">
+                      {isCumulativePage
+                        ? "Cumulative Trend"
+                        : isConsumptionPage
+                          ? "Interval Consumption"
+                          : "Daily Baseline"}
+                    </span>
+                    <h2>
+                      {isCumulativePage
+                        ? "Follow the cumulative register"
+                        : isConsumptionPage
+                          ? "Choose a window and bucket"
+                          : "Compare against the rolling baseline"}
+                    </h2>
                     <p>
-                      Move from short hourly views to broader monthly or yearly summaries without
-                      leaving the charts page.
+                      {isCumulativePage
+                        ? "Inspect the raw cumulative feed across any selected window."
+                        : isConsumptionPage
+                          ? "Move from short hourly views to broader monthly or yearly summaries."
+                          : "This page always compares the latest 30 days of daily totals against a rolling seven-day average."}
                     </p>
                   </div>
                 </div>
 
-                <div className="control-group">
-                  <span className="label">Range</span>
-                  <div className="segmented">
-                    {presets.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        className={item.value === preset ? "is-active" : ""}
-                        onClick={() => {
-                          setRangeEnd(new Date());
-                          setPreset(item.value);
-                        }}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
+                {isBaselinePage ? null : (
+                  <div className="control-group">
+                    <span className="label">Range</span>
+                    <div className="segmented">
+                      {presets.map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={item.value === preset ? "is-active" : ""}
+                          onClick={() => {
+                            setRangeEnd(new Date());
+                            setPreset(item.value);
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="control-group">
-                  <span className="label">Buckets</span>
-                  <div className="segmented segmented--compact">
-                    {buckets.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        className={item.value === bucket ? "is-active" : ""}
-                        onClick={() => setBucket(item.value)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
+                {isConsumptionPage ? (
+                  <div className="control-group">
+                    <span className="label">Buckets</span>
+                    <div className="segmented segmented--compact">
+                      {buckets.map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={item.value === bucket ? "is-active" : ""}
+                          onClick={() => setBucket(item.value)}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : null}
 
                 <p className="range-meta">
-                  {activePresetLabel} selected. Interval consumption is grouped as{" "}
-                  {activeBucketLabel.toLowerCase()} buckets for {rangeSummary}.
+                  {isCumulativePage
+                    ? `${activePresetLabel} selected. Raw cumulative values span ${activeRangeSummary}.`
+                    : isConsumptionPage
+                      ? `${activePresetLabel} selected. Interval consumption is grouped as ${activeBucketLabel.toLowerCase()} buckets for ${activeRangeSummary}.`
+                      : `Baseline view spans ${baselineRangeSummary} using daily totals only.`}
                 </p>
               </div>
 
               <aside className="card inspector-card">
                 <span className="eyebrow">Inspector</span>
-                <h2>{activeBucketLabel} lens</h2>
+                <h2>
+                  {isCumulativePage
+                    ? "Meter register lens"
+                    : isConsumptionPage
+                      ? `${activeBucketLabel} lens`
+                      : "30-day lens"}
+                </h2>
                 <p>
-                  Use the cumulative trend to spot resets, the grouped bars to locate bursts, and
-                  the baseline overlay to judge whether the period is noisy or normal.
+                  {isCumulativePage
+                    ? "Use the raw curve to identify resets, stalls, and suspicious jumps before looking at alerts."
+                    : isConsumptionPage
+                      ? "Grouped deltas expose the busiest buckets and make quiet periods obvious."
+                      : "Daily totals versus the rolling average show whether higher usage is persistent or temporary."}
                 </p>
                 <div className="inspector-card__stats">
                   <div>
-                    <span className="label">Alerts</span>
-                    <strong>{alertsQuery.data?.length ?? 0}</strong>
+                    <span className="label">
+                      {isCumulativePage
+                        ? "Alerts"
+                        : isConsumptionPage
+                          ? "Buckets"
+                          : "Days"}
+                    </span>
+                    <strong>
+                      {isCumulativePage
+                        ? alertsQuery.data?.length ?? 0
+                        : isConsumptionPage
+                          ? consumptionQuery.data?.length ?? 0
+                          : dailySeries.length}
+                    </strong>
                   </div>
                   <div>
-                    <span className="label">Points</span>
-                    <strong>{consumptionQuery.data?.length ?? 0}</strong>
+                    <span className="label">
+                      {isCumulativePage
+                        ? "Samples"
+                        : isConsumptionPage
+                          ? "Peak"
+                          : "Above avg"}
+                    </span>
+                    <strong>
+                      {isCumulativePage
+                        ? cumulativeQuery.data?.length ?? 0
+                        : isConsumptionPage
+                          ? highestConsumptionPoint
+                            ? formatVolume(highestConsumptionPoint.consumptionM3)
+                            : "No data"
+                          : baselineDaysAboveAverage}
+                    </strong>
                   </div>
                 </div>
               </aside>
             </section>
 
-            <section className="grid-two">
-              <ChartCard
-                title="Cumulative Meter Trend"
-                subtitle="Raw cumulative readings show how the register moves over time."
-              >
-                <EChart option={cumulativeOption} height={340} />
-              </ChartCard>
+            <section className="chart-stack">
+              {isCumulativePage ? (
+                <>
+                  <ChartCard
+                    title="Cumulative Meter Trend"
+                    subtitle="Raw cumulative readings show how the register moves over time."
+                  >
+                    <EChart option={cumulativeOption} height={380} />
+                  </ChartCard>
+                  <AlertPanel alerts={alertsQuery.data ?? []} />
+                </>
+              ) : null}
 
-              <AlertPanel alerts={alertsQuery.data ?? []} />
-            </section>
+              {isConsumptionPage ? (
+                <ChartCard
+                  title="Interval Consumption"
+                  subtitle={`Usage grouped by ${activeBucketLabel.toLowerCase()}. Zero-filled buckets expose quiet periods clearly.`}
+                >
+                  <EChart option={consumptionOption} height={380} />
+                </ChartCard>
+              ) : null}
 
-            <section className="grid-two">
-              <ChartCard
-                title="Interval Consumption"
-                subtitle={`Usage grouped by ${activeBucketLabel.toLowerCase()}. Zero-filled buckets expose quiet periods clearly.`}
-              >
-                <EChart option={consumptionOption} height={320} />
-              </ChartCard>
-
-              <ChartCard
-                title="Daily Baseline"
-                subtitle="Thirty-day actual usage against a rolling seven-day average."
-              >
-                <EChart option={baselineOption} height={320} />
-              </ChartCard>
+              {isBaselinePage ? (
+                <ChartCard
+                  title="Daily Baseline"
+                  subtitle="Thirty-day actual usage against a rolling seven-day average."
+                >
+                  <EChart option={baselineOption} height={380} />
+                </ChartCard>
+              ) : null}
             </section>
           </>
         ) : (
@@ -640,7 +767,7 @@ export default function App() {
               </div>
 
               <p className="range-meta">
-                Showing up to 2,000 rows for {rangeSummary}. Values remain cumulative, not
+                Showing up to 2,000 rows for {activeRangeSummary}. Values remain cumulative, not
                 per-bucket deltas.
               </p>
             </section>
