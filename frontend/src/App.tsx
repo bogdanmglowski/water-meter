@@ -385,6 +385,13 @@ export default function App() {
   const totalReadingPages = rawReadingsPage?.totalPages ?? 1;
   const activeReadingsPage = rawReadingsPage?.page ?? readingsPage;
   const totalReadings = rawReadingsPage?.totalCount ?? 0;
+  const cumulativeValues = (cumulativeQuery.data ?? []).map((point) => point.meterValueM3);
+  const cumulativeMin = cumulativeValues.length > 0 ? Math.min(...cumulativeValues) : undefined;
+  const cumulativeMax = cumulativeValues.length > 0 ? Math.max(...cumulativeValues) : undefined;
+  const cumulativePadding =
+    cumulativeMin !== undefined && cumulativeMax !== undefined
+      ? Math.max(1, Math.ceil((cumulativeMax - cumulativeMin || 10) * 0.08))
+      : undefined;
 
   function handleDeleteReading(reading: Reading) {
     const shouldDelete = window.confirm(
@@ -415,6 +422,14 @@ export default function App() {
     yAxis: {
       type: "value",
       name: "m³",
+      min:
+        cumulativeMin !== undefined && cumulativePadding !== undefined
+          ? cumulativeMin - cumulativePadding
+          : undefined,
+      max:
+        cumulativeMax !== undefined && cumulativePadding !== undefined
+          ? cumulativeMax + cumulativePadding
+          : undefined,
       nameTextStyle: chartAxisLabel(),
       axisLabel: chartAxisLabel(),
       splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
