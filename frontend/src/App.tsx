@@ -538,17 +538,6 @@ export default function App() {
   };
 
   const activeRangeSummary = `${formatTimestamp(activeRange.from)} to ${formatTimestamp(activeRange.to)}`;
-  const pageDescription = isDashboardPage
-    ? "A cumulative meter feed rendered as a neon control room for live household usage."
-    : isCumulativePage
-      ? "Track the raw meter register over time to spot resets, stalls, and sudden jumps."
-    : isConsumptionPage
-        ? "Study grouped consumption bursts across hourly to yearly buckets."
-        : isBaselinePage
-          ? "Compare daily usage for the selected window against a rolling seven-day average."
-          : isAnomaliesPage
-            ? "Review OCR readings that were skipped because they jumped too far above the previous accepted value."
-            : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it.";
   const rangeControls = (
     <>
       <div className="control-group">
@@ -616,11 +605,9 @@ export default function App() {
         <header className="topbar">
           <div className="topbar__main">
             <div className="brand-block">
-              <span className="eyebrow">Synthwave water lab</span>
               <h1>
                 Water <span>Meter</span>
               </h1>
-              <p>{pageDescription}</p>
             </div>
 
             <nav className="page-nav" aria-label="Subpages">
@@ -634,7 +621,6 @@ export default function App() {
                 >
                   <span className="page-nav__index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="page-nav__label">{item.label}</span>
-                  <span className="page-nav__detail">{item.detail}</span>
                 </a>
               ))}
             </nav>
