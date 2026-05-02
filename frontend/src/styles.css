@@ -145,14 +145,10 @@ a:focus-visible {
 }
 
 .topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
-  gap: 1rem;
-  align-items: stretch;
+  display: block;
 }
 
 .topbar__main,
-.status-panel,
 .card,
 .metric-card {
   position: relative;
@@ -165,7 +161,6 @@ a:focus-visible {
 }
 
 .topbar__main::before,
-.status-panel::before,
 .card::before,
 .metric-card::before {
   content: "";
@@ -189,8 +184,7 @@ a:focus-visible {
 }
 
 .topbar h1,
-.section-head h2,
-.inspector-card h2 {
+.section-head h2 {
   margin: 0;
   color: var(--color-polar-white);
 }
@@ -211,8 +205,6 @@ a:focus-visible {
 .metric-card__detail,
 .empty-state p,
 .hero-card__copy p,
-.inspector-card p,
-.status-panel__text,
 .range-meta,
 .table-pagination,
 .table-pagination__summary,
@@ -295,19 +287,8 @@ a:focus-visible {
   opacity: 0.7;
 }
 
-.status-panel {
-  border-radius: 16px;
-  padding: 1.35rem;
-  display: grid;
-  gap: 0.9rem;
-  align-content: start;
-}
-
-.status-panel__header,
-.status-panel__meta,
 .hero-card__headline,
 .hero-card__ledger-row,
-.sidekick-card__header,
 .table-pagination,
 .alert__meta,
 .alert__stats {
@@ -318,7 +299,6 @@ a:focus-visible {
   gap: 0.65rem;
 }
 
-.status-chip,
 .count-pill,
 .severity,
 .alert__kind,
@@ -336,63 +316,9 @@ a:focus-visible {
   text-transform: uppercase;
 }
 
-.status-chip {
-  background: rgba(236, 72, 153, 0.18);
-  color: var(--color-polar-white);
-  border: 1px solid rgba(244, 114, 182, 0.36);
-}
-
-.status-panel__mono,
-.command-line__prompt,
-.command-line__text,
 .hero-card__mono {
   font-family: var(--font-mono);
   color: var(--color-faded-rose);
-}
-
-.status-panel__title {
-  font-size: 1.55rem;
-  line-height: 1.1;
-  color: var(--color-polar-white);
-}
-
-.command-line {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 1rem;
-  border-radius: 8px;
-  background: rgba(40, 42, 54, 0.92);
-  border: 1px solid rgba(58, 58, 63, 0.95);
-  overflow: auto;
-}
-
-.command-line__prompt {
-  color: var(--color-electric-cyan);
-}
-
-.command-line__text {
-  white-space: nowrap;
-}
-
-.status-panel__meta {
-  align-items: stretch;
-}
-
-.status-panel__meta > div {
-  flex: 1;
-  min-width: 120px;
-  padding: 0.9rem;
-  border-radius: 8px;
-  background: rgba(40, 42, 54, 0.58);
-  border: 1px solid rgba(58, 58, 63, 0.95);
-  display: grid;
-  gap: 0.45rem;
-}
-
-.status-panel__meta strong {
-  color: var(--color-polar-white);
-  font-size: 0.95rem;
 }
 
 .hero-grid,
@@ -408,12 +334,12 @@ a:focus-visible {
 }
 
 .hero-grid {
-  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+  grid-template-columns: 1fr;
 }
 
 .grid-two,
 .page-intro-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .metric-grid {
@@ -461,9 +387,7 @@ a:focus-visible {
 .hero-card__copy,
 .hero-card__summary,
 .metric-card,
-.page-intro,
-.inspector-card,
-.sidekick-card {
+.page-intro {
   display: grid;
   gap: 0.9rem;
 }
@@ -509,7 +433,6 @@ a:focus-visible {
 }
 
 .hero-card__summary strong,
-.inspector-card__stats strong,
 .metric-card__value {
   color: var(--color-polar-white);
 }
@@ -517,19 +440,6 @@ a:focus-visible {
 .hero-card__summary strong {
   font-size: 2rem;
   line-height: 1;
-}
-
-.signal-list {
-  margin: 0;
-  padding-left: 1rem;
-  display: grid;
-  gap: 0.65rem;
-  color: var(--color-silver-text);
-  opacity: 0.82;
-}
-
-.signal-list li::marker {
-  color: var(--color-cyber-pink);
 }
 
 .control-group {
@@ -545,8 +455,7 @@ a:focus-visible {
   margin-bottom: 1rem;
 }
 
-.section-head h2,
-.inspector-card h2 {
+.section-head h2 {
   font-size: clamp(1.35rem, 3vw, 1.8rem);
   line-height: 1.1;
 }
@@ -734,21 +643,6 @@ a:focus-visible {
   border: 1px solid rgba(244, 114, 182, 0.26);
 }
 
-.inspector-card__stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-}
-
-.inspector-card__stats > div {
-  padding: 0.95rem;
-  border-radius: 8px;
-  background: rgba(40, 42, 54, 0.84);
-  border: 1px solid rgba(58, 58, 63, 0.95);
-  display: grid;
-  gap: 0.4rem;
-}
-
 .alert-list {
   display: grid;
   gap: 0.8rem;
@@ -920,7 +814,6 @@ a:focus-visible {
   }
 
   .topbar__main,
-  .status-panel,
   .card,
   .metric-card {
     padding: 1rem;
@@ -934,18 +827,8 @@ a:focus-visible {
     font-size: 3rem;
   }
 
-  .inspector-card__stats,
-  .status-panel__meta {
-    flex-direction: column;
-  }
-
   .range-input-grid {
     grid-template-columns: 1fr;
-  }
-
-  .status-panel__meta > div,
-  .inspector-card__stats > div {
-    width: 100%;
   }
 
   .reading-table th:nth-child(3),
