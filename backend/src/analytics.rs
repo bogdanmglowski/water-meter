@@ -53,6 +53,7 @@ pub struct ReadingsPage {
     pub total_count: usize,
     pub total_pages: usize,
     pub offset: usize,
+    pub limit: usize,
 }
 
 pub fn build_readings(readings: &[DbReading]) -> Vec<ReadingDto> {
@@ -63,7 +64,11 @@ pub fn build_anomalies(anomalies: &[DbAnomaly]) -> Vec<AnomalyDto> {
     anomalies.iter().map(map_anomaly).collect()
 }
 
-pub fn resolve_readings_page(requested_page: usize, page_size: usize, total_count: usize) -> ReadingsPage {
+pub fn resolve_readings_page(
+    requested_page: usize,
+    page_size: usize,
+    total_count: usize,
+) -> ReadingsPage {
     let page_size = page_size.max(1);
     let total_pages = if total_count == 0 {
         1
@@ -71,19 +76,23 @@ pub fn resolve_readings_page(requested_page: usize, page_size: usize, total_coun
         total_count.div_ceil(page_size)
     };
     let page = requested_page.max(1).min(total_pages);
+    let newer_items_skipped = (page - 1) * page_size;
+    let limit = total_count.saturating_sub(newer_items_skipped).min(page_size);
+    let offset = total_count.saturating_sub(newer_items_skipped + limit);
 
     ReadingsPage {
         page,
         page_size,
         total_count,
         total_pages,
-        offset: (page - 1) * page_size,
+        offset,
+        limit,
     }
 }
 
 pub fn build_readings_page(readings: &[DbReading], page: ReadingsPage) -> ReadingsPageDto {
     ReadingsPageDto {
-        items: build_readings(readings),
+        items: readings.iter().rev().map(map_reading).collect(),
         page: page.page,
         page_size: page.page_size,
         total_count: page.total_count,
@@ -494,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn readings_page_clamps_to_last_page_and_maps_ids() {
+    fn readings_page_clamps_to_last_page_and_returns_newest_first() {
         let readings = vec![
             reading(datetime!(2026-04-01 00:00 UTC), 10),
             reading(datetime!(2026-04-01 01:00 UTC), 12),
@@ -506,8 +515,56 @@ mod tests {
         assert_eq!(page.page, 1);
         assert_eq!(page.total_pages, 1);
         assert_eq!(page.offset, 0);
+        assert_eq!(page.limit, 2);
         assert_eq!(response.total_count, 2);
-        assert_eq!(response.items[0].id, datetime!(2026-04-01 00:00 UTC).unix_timestamp());
+        assert_eq!(response.items[0].id, datetime!(2026-04-01 01:00 UTC).unix_timestamp());
+        assert_eq!(response.items[1].id, datetime!(2026-04-01 00:00 UTC).unix_timestamp());
+    }
+
+    #[test]
+    fn readings_page_uses_descending_pagination_offsets() {
+        let readings = vec![
+            reading(datetime!(2026-04-01 00:00 UTC), 10),
+            reading(datetime!(2026-04-01 01:00 UTC), 12),
+            reading(datetime!(2026-04-01 02:00 UTC), 14),
+        ];
+
+        let first_page = resolve_readings_page(1, 2, readings.len());
+        let first_page_response = build_readings_page(
+            &readings[first_page.offset..first_page.offset + first_page.limit],
+            first_page,
+        );
+
+        assert_eq!(first_page.offset, 1);
+        assert_eq!(first_page.limit, 2);
+        assert_eq!(
+            first_page_response
+                .items
+                .iter()
+                .map(|reading| reading.id)
+                .collect::<Vec<_>>(),
+            vec![
+                datetime!(2026-04-01 02:00 UTC).unix_timestamp(),
+                datetime!(2026-04-01 01:00 UTC).unix_timestamp(),
+            ]
+        );
+
+        let last_page = resolve_readings_page(2, 2, readings.len());
+        let last_page_response = build_readings_page(
+            &readings[last_page.offset..last_page.offset + last_page.limit],
+            last_page,
+        );
+
+        assert_eq!(last_page.offset, 0);
+        assert_eq!(last_page.limit, 1);
+        assert_eq!(
+            last_page_response
+                .items
+                .iter()
+                .map(|reading| reading.id)
+                .collect::<Vec<_>>(),
+            vec![datetime!(2026-04-01 00:00 UTC).unix_timestamp()]
+        );
     }
 
     #[test]

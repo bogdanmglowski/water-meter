@@ -168,7 +168,7 @@ async fn readings(
         to,
         i64::try_from(page.offset)
             .map_err(|_| AppError::Internal("readings offset overflow".to_owned()))?,
-        i64::try_from(page.page_size)
+        i64::try_from(page.limit)
             .map_err(|_| AppError::Internal("page size overflow".to_owned()))?,
     )
     .await?;
