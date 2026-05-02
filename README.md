@@ -78,6 +78,14 @@ Important files:
 - [infra/docker-compose.yml](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/docker-compose.yml)
 - [infra/db/seed.sql](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/db/seed.sql)
 
+### `backup/`
+
+One-off PostgreSQL backup container used by the deployment stack.
+
+Important files:
+- [backup/Dockerfile](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backup/Dockerfile)
+- [backup/docker-run.sh](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backup/docker-run.sh)
+
 ### `scripts/`
 
 Helper scripts for local development.
@@ -128,6 +136,7 @@ cp .env.example .env
 - `POSTGRES_DB`: database name used by Docker and seed script
 - `POSTGRES_USER`: database user
 - `POSTGRES_PASSWORD`: database password
+- `BACKUP_HOST_DIR`: absolute host directory where `./scripts/deploy.sh backup` writes dumps
 - `SEED_DEMO_DATA`: whether Docker startup should seed demo data into an empty database
 - `VITE_API_BASE_URL`: optional explicit frontend API base URL
 
@@ -195,6 +204,7 @@ cp .env.production.example .env.production
 - set `CLIENT_HOST` to the server LAN IP or DNS name
 - set `CLIENT_URL`, `API_URL`, and `CLIENT_ORIGIN` to the same host
 - set a real `POSTGRES_PASSWORD`
+- set `BACKUP_HOST_DIR` to the host directory that should receive database dumps
 - keep `SEED_DEMO_DATA=false` unless this host should start with demo data
 
 5. Start the stack:
@@ -213,6 +223,12 @@ Optional demo bootstrap:
 
 ```bash
 ./scripts/deploy.sh up --demo
+```
+
+Create a database backup:
+
+```bash
+./scripts/deploy.sh backup
 ```
 
 Operational commands:
@@ -241,6 +257,10 @@ Reader profile notes:
 - the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`
 - host Ollama must listen on an address reachable from Docker
 - the reader container writes images into `reader/runtime/` on the host
+
+Backup notes:
+- `./scripts/deploy.sh backup` runs the `backup/` container through the same compose stack
+- dumps are written to `BACKUP_HOST_DIR`, default `/tmp`
 
 Optional autostart with `systemd`:
 

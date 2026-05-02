@@ -7,7 +7,7 @@ ENV_FILE="${ROOT_DIR}/.env.production"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/deploy.sh [up|down|restart|logs|ps|config|pull] [--demo] [--reader]
+Usage: ./scripts/deploy.sh [up|down|restart|logs|ps|config|pull|backup] [--demo] [--reader]
 
 Commands:
   up       Build and start the deployment stack in the background
@@ -17,6 +17,7 @@ Commands:
   ps       Show compose service status
   config   Render the resolved compose configuration
   pull     Pull newer base images before the next restart
+  backup   Run a one-off PostgreSQL backup into BACKUP_HOST_DIR
 
 Flags:
   --demo   Enable demo seeding for an empty database
@@ -27,10 +28,11 @@ EOF
 command="up"
 demo_seed="false"
 reader_enabled="false"
+backup_enabled="false"
 
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    up|down|restart|logs|ps|config|pull)
+    up|down|restart|logs|ps|config|pull|backup)
       command="$1"
       shift
       ;;
@@ -67,12 +69,105 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-compose() {
-  compose_profiles=""
-  if [[ "$reader_enabled" == "true" ]]; then
-    compose_profiles="reader"
+strip_matching_quotes() {
+  local value="$1"
+
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value#\"}"
+    value="${value%\"}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value#\'}"
+    value="${value%\'}"
   fi
-  SEED_DEMO_DATA="$demo_seed" COMPOSE_PROFILES="$compose_profiles" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+
+  printf '%s\n' "$value"
+}
+
+read_env_file_value() {
+  local key="$1"
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+
+    if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
+      continue
+    fi
+
+    if [[ "$line" == "$key="* ]]; then
+      strip_matching_quotes "${line#*=}"
+      return 0
+    fi
+  done < "$ENV_FILE"
+
+  return 1
+}
+
+resolve_backup_host_dir() {
+  if [[ -n "${BACKUP_HOST_DIR:-}" ]]; then
+    strip_matching_quotes "$BACKUP_HOST_DIR"
+    return 0
+  fi
+
+  read_env_file_value "BACKUP_HOST_DIR"
+}
+
+validate_backup_host_dir() {
+  local backup_host_dir
+
+  if ! backup_host_dir="$(resolve_backup_host_dir)"; then
+    printf 'Missing BACKUP_HOST_DIR in %s.\n' "$ENV_FILE" >&2
+    exit 1
+  fi
+
+  if [[ "$backup_host_dir" != /* ]]; then
+    printf 'BACKUP_HOST_DIR must be an absolute path, got: %s\n' "$backup_host_dir" >&2
+    exit 1
+  fi
+
+  mkdir -p "$backup_host_dir"
+
+  if [[ ! -d "$backup_host_dir" ]]; then
+    printf 'BACKUP_HOST_DIR is not a directory: %s\n' "$backup_host_dir" >&2
+    exit 1
+  fi
+
+  if [[ ! -w "$backup_host_dir" ]]; then
+    printf 'BACKUP_HOST_DIR is not writable: %s\n' "$backup_host_dir" >&2
+    exit 1
+  fi
+}
+
+compose() {
+  local -a compose_profiles=()
+  local compose_profiles_value=""
+
+  if [[ "$reader_enabled" == "true" ]]; then
+    compose_profiles+=("reader")
+  fi
+
+  if [[ "$backup_enabled" == "true" ]]; then
+    compose_profiles+=("backup")
+  fi
+
+  if ((${#compose_profiles[@]} > 0)); then
+    local IFS=,
+    compose_profiles_value="${compose_profiles[*]}"
+  fi
+
+  SEED_DEMO_DATA="$demo_seed" COMPOSE_PROFILES="$compose_profiles_value" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+db_is_running() {
+  local service
+
+  while IFS= read -r service; do
+    if [[ "$service" == "db" ]]; then
+      return 0
+    fi
+  done < <(compose ps --status running --services 2>/dev/null || true)
+
+  return 1
 }
 
 print_failure_diagnostics() {
@@ -108,6 +203,33 @@ compose_up() {
   fi
 }
 
+compose_backup() {
+  local started_db_for_backup="false"
+  local status=0
+
+  backup_enabled="true"
+  validate_backup_host_dir
+
+  if ! db_is_running; then
+    compose up -d db
+    started_db_for_backup="true"
+  fi
+
+  if compose run --rm --build --no-deps -u "$(id -u):$(id -g)" backup; then
+    :
+  else
+    status=$?
+  fi
+
+  if [[ "$started_db_for_backup" == "true" ]]; then
+    compose stop db >/dev/null || true
+  fi
+
+  if [[ "$status" -ne 0 ]]; then
+    exit "$status"
+  fi
+}
+
 case "$command" in
   up)
     compose_up
@@ -129,5 +251,8 @@ case "$command" in
     ;;
   pull)
     compose pull
+    ;;
+  backup)
+    compose_backup
     ;;
 esac

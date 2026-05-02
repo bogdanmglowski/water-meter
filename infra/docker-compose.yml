@@ -101,5 +101,27 @@ services:
       backend:
         condition: service_healthy
 
+  backup:
+    profiles: ["backup"]
+    build:
+      context: ../backup
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-water_meter}
+      PGUSER: ${POSTGRES_USER:-water_meter}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-water_meter}
+      BACKUP_TARGET_DIR: /backups
+      BACKUP_HOST_DIR: ${BACKUP_HOST_DIR:-/tmp}
+      BACKUP_WAIT_SECONDS: ${BACKUP_WAIT_SECONDS:-30}
+    command: ["/app/docker-run.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ${BACKUP_HOST_DIR:-/tmp}:/backups
+
 volumes:
   water-meter-pg:
