@@ -1,5 +1,6 @@
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::PgExecutor;
 use time::OffsetDateTime;
 
 use crate::models::DbReading;
@@ -17,29 +18,62 @@ pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
 }
 
 pub async fn fetch_readings(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     from: Option<OffsetDateTime>,
     to: Option<OffsetDateTime>,
+    offset: i64,
     limit: i64,
-    cursor: Option<OffsetDateTime>,
 ) -> Result<Vec<DbReading>, sqlx::Error> {
     sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT recorded_at, meter_value_m3, source
+        SELECT id, recorded_at, meter_value_m3, source
         FROM meter_readings
         WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
           AND ($2::timestamptz IS NULL OR recorded_at <= $2)
-          AND ($3::timestamptz IS NULL OR recorded_at > $3)
-        ORDER BY recorded_at ASC
+        ORDER BY recorded_at ASC, id ASC
+        OFFSET $3
         LIMIT $4
         "#,
     )
     .bind(from)
     .bind(to)
-    .bind(cursor)
+    .bind(offset)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
+}
+
+pub async fn count_readings(
+    executor: impl PgExecutor<'_>,
+    from: Option<OffsetDateTime>,
+    to: Option<OffsetDateTime>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM meter_readings
+        WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
+          AND ($2::timestamptz IS NULL OR recorded_at <= $2)
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(executor)
+    .await
+}
+
+pub async fn delete_reading(pool: &PgPool, id: i64) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM meter_readings
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 pub async fn fetch_window_readings(
@@ -49,24 +83,25 @@ pub async fn fetch_window_readings(
 ) -> Result<Vec<DbReading>, sqlx::Error> {
     let previous = sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT recorded_at, meter_value_m3, source
+        SELECT id, recorded_at, meter_value_m3, source
         FROM meter_readings
         WHERE recorded_at < $1
-        ORDER BY recorded_at DESC
+        ORDER BY recorded_at DESC, id DESC
         LIMIT 1
         "#,
     )
     .bind(from)
     .fetch_optional(pool)
-    .await?;
+    .await
+    ?;
 
     let mut readings = sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT recorded_at, meter_value_m3, source
+        SELECT id, recorded_at, meter_value_m3, source
         FROM meter_readings
         WHERE recorded_at >= $1
           AND recorded_at <= $2
-        ORDER BY recorded_at ASC
+        ORDER BY recorded_at ASC, id ASC
         "#,
     )
     .bind(from)

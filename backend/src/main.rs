@@ -4,9 +4,9 @@ mod db;
 mod error;
 mod models;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method};
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use sqlx::PgPool;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
@@ -19,8 +19,8 @@ use crate::analytics::Bucket;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AlertDto, ConsumptionQuery, DashboardQuery, DashboardResponse, HealthResponse, RangeQuery,
-    ReadingDto, ReadingsQuery, UsagePoint,
+    AlertDto, ConsumptionQuery, DashboardQuery, DashboardResponse, DeleteReadingResponse,
+    HealthResponse, RangeQuery, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
 };
 
 #[derive(Clone)]
@@ -34,6 +34,7 @@ struct AppState {
         health,
         dashboard,
         readings,
+        delete_reading,
         cumulative_series,
         consumption_series,
         alerts,
@@ -43,6 +44,8 @@ struct AppState {
         schemas(
             HealthResponse,
             ReadingDto,
+            ReadingsPageDto,
+            DeleteReadingResponse,
             UsagePoint,
             AlertDto,
             DashboardResponse,
@@ -76,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(health))
         .route("/api/dashboard", get(dashboard))
         .route("/api/readings", get(readings))
+        .route("/api/readings/{id}", delete(delete_reading))
         .route("/api/series/cumulative", get(cumulative_series))
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
@@ -84,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(allowed_origin)
-                .allow_methods([Method::GET])
+                .allow_methods([Method::GET, Method::DELETE])
                 .allow_headers(Any),
         )
         .layer(TraceLayer::new_for_http());
@@ -131,19 +135,55 @@ async fn dashboard(
 #[utoipa::path(
     get,
     path = "/api/readings",
-    responses((status = 200, description = "Raw readings", body = [ReadingDto]))
+    responses((status = 200, description = "Raw readings", body = ReadingsPageDto))
 )]
 async fn readings(
     State(state): State<AppState>,
     Query(query): Query<ReadingsQuery>,
-) -> AppResult<Json<Vec<ReadingDto>>> {
+) -> AppResult<Json<ReadingsPageDto>> {
     let from = parse_optional_timestamp(query.from.as_deref())?;
     let to = parse_optional_timestamp(query.to.as_deref())?;
     validate_range(from, to)?;
-    let cursor = parse_optional_timestamp(query.cursor.as_deref())?;
-    let limit = query.limit.unwrap_or(240).clamp(1, 2_000) as i64;
-    let rows = db::fetch_readings(&state.pool, from, to, limit, cursor).await?;
-    Ok(Json(analytics::build_readings(&rows)))
+    let requested_page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 200);
+    let mut transaction = state.pool.begin().await?;
+    let total_count = usize::try_from(db::count_readings(&mut *transaction, from, to).await?)
+        .map_err(|_| AppError::Internal("readings count overflow".to_owned()))?;
+    let page = analytics::resolve_readings_page(requested_page, page_size, total_count);
+    let rows = db::fetch_readings(
+        &mut *transaction,
+        from,
+        to,
+        i64::try_from(page.offset)
+            .map_err(|_| AppError::Internal("readings offset overflow".to_owned()))?,
+        i64::try_from(page.page_size)
+            .map_err(|_| AppError::Internal("page size overflow".to_owned()))?,
+    )
+    .await?;
+    transaction.commit().await?;
+
+    Ok(Json(analytics::build_readings_page(&rows, page)))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/readings/{id}",
+    params(("id" = i64, Path, description = "Reading id")),
+    responses(
+        (status = 200, description = "Reading deleted", body = DeleteReadingResponse),
+        (status = 404, description = "Reading not found")
+    )
+)]
+async fn delete_reading(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<DeleteReadingResponse>> {
+    let deleted = db::delete_reading(&state.pool, id).await?;
+    if deleted == 0 {
+        return Err(AppError::NotFound(format!("reading {id} was not found")));
+    }
+
+    Ok(Json(DeleteReadingResponse { deleted: true, id }))
 }
 
 #[utoipa::path(
@@ -156,7 +196,7 @@ async fn cumulative_series(
     Query(query): Query<RangeQuery>,
 ) -> AppResult<Json<Vec<ReadingDto>>> {
     let (from, to) = resolve_range(query.from.as_deref(), query.to.as_deref(), 30)?;
-    let rows = db::fetch_readings(&state.pool, Some(from), Some(to), 10_000, None).await?;
+    let rows = db::fetch_readings(&state.pool, Some(from), Some(to), 0, 10_000).await?;
     Ok(Json(analytics::build_readings(&rows)))
 }
 

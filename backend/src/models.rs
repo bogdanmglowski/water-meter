@@ -5,6 +5,7 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct DbReading {
+    pub id: i64,
     pub recorded_at: OffsetDateTime,
     pub meter_value_m3: i64,
     pub source: String,
@@ -22,11 +23,29 @@ pub struct HealthResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingDto {
+    pub id: i64,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub recorded_at: OffsetDateTime,
     pub meter_value_m3: i64,
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingsPageDto {
+    pub items: Vec<ReadingDto>,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_count: usize,
+    pub total_pages: usize,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteReadingResponse {
+    pub deleted: bool,
+    pub id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -105,8 +124,8 @@ pub struct RangeQuery {
 pub struct ReadingsQuery {
     pub from: Option<String>,
     pub to: Option<String>,
-    pub limit: Option<usize>,
-    pub cursor: Option<String>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +158,7 @@ mod tests {
                 anomaly_count: 1,
             },
             latest_reading: Some(ReadingDto {
+                id: 7,
                 recorded_at: datetime!(2026-04-26 09:08:07 UTC),
                 meter_value_m3: 43,
                 source: "seed".to_owned(),
@@ -169,6 +189,7 @@ mod tests {
         let alert_json = serde_json::to_value(alert).expect("alert serializes");
 
         assert_eq!(response_json["generatedAt"], json!("2026-04-26T10:11:12Z"));
+        assert_eq!(response_json["latestReading"]["id"], json!(7));
         assert_eq!(
             response_json["latestReading"]["recordedAt"],
             json!("2026-04-26T09:08:07Z")

@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::models::{
-    AlertDto, AlertSeverity, DashboardResponse, DashboardSummary, DbReading, ReadingDto, UsagePoint,
+    AlertDto, AlertSeverity, DashboardResponse, DashboardSummary, DbReading, ReadingDto,
+    ReadingsPageDto, UsagePoint,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -45,8 +46,45 @@ struct UsageAccumulator {
     reading_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadingsPage {
+    pub page: usize,
+    pub page_size: usize,
+    pub total_count: usize,
+    pub total_pages: usize,
+    pub offset: usize,
+}
+
 pub fn build_readings(readings: &[DbReading]) -> Vec<ReadingDto> {
     readings.iter().map(map_reading).collect()
+}
+
+pub fn resolve_readings_page(requested_page: usize, page_size: usize, total_count: usize) -> ReadingsPage {
+    let page_size = page_size.max(1);
+    let total_pages = if total_count == 0 {
+        1
+    } else {
+        total_count.div_ceil(page_size)
+    };
+    let page = requested_page.max(1).min(total_pages);
+
+    ReadingsPage {
+        page,
+        page_size,
+        total_count,
+        total_pages,
+        offset: (page - 1) * page_size,
+    }
+}
+
+pub fn build_readings_page(readings: &[DbReading], page: ReadingsPage) -> ReadingsPageDto {
+    ReadingsPageDto {
+        items: build_readings(readings),
+        page: page.page,
+        page_size: page.page_size,
+        total_count: page.total_count,
+        total_pages: page.total_pages,
+    }
 }
 
 pub fn build_dashboard(
@@ -331,6 +369,7 @@ fn overnight_leak_alert(
 
 fn map_reading(reading: &DbReading) -> ReadingDto {
     ReadingDto {
+        id: reading.id,
         recorded_at: reading.recorded_at,
         meter_value_m3: reading.meter_value_m3,
         source: reading.source.clone(),
@@ -430,10 +469,28 @@ mod tests {
 
     fn reading(recorded_at: OffsetDateTime, meter_value_m3: i64) -> DbReading {
         DbReading {
+            id: recorded_at.unix_timestamp(),
             recorded_at,
             meter_value_m3,
             source: "test".to_owned(),
         }
+    }
+
+    #[test]
+    fn readings_page_clamps_to_last_page_and_maps_ids() {
+        let readings = vec![
+            reading(datetime!(2026-04-01 00:00 UTC), 10),
+            reading(datetime!(2026-04-01 01:00 UTC), 12),
+        ];
+
+        let page = resolve_readings_page(3, 2, 2);
+        let response = build_readings_page(&readings, page);
+
+        assert_eq!(page.page, 1);
+        assert_eq!(page.total_pages, 1);
+        assert_eq!(page.offset, 0);
+        assert_eq!(response.total_count, 2);
+        assert_eq!(response.items[0].id, datetime!(2026-04-01 00:00 UTC).unix_timestamp());
     }
 
     #[test]

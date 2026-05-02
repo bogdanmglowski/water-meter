@@ -3,9 +3,18 @@ export type Bucket = "hour" | "day" | "week" | "month" | "year";
 export type AlertSeverity = "info" | "medium" | "high";
 
 export interface Reading {
+  id: number;
   recordedAt: string;
   meterValueM3: number;
   source: string;
+}
+
+export interface ReadingsPage {
+  items: Reading[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
 }
 
 export interface UsagePoint {

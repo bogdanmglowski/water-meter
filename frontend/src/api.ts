@@ -3,6 +3,7 @@ import type {
   Bucket,
   DashboardResponse,
   Reading,
+  ReadingsPage,
   UsagePoint,
 } from "./types";
 import { toIsoTimestamp } from "./utils";
@@ -21,6 +22,9 @@ type RawAlertItem = Omit<AlertItem, "startsAt" | "endsAt"> & {
 type RawDashboardResponse = Omit<DashboardResponse, "generatedAt" | "latestReading"> & {
   generatedAt: unknown;
   latestReading: RawReading | null;
+};
+type RawReadingsPage = Omit<ReadingsPage, "items"> & {
+  items: RawReading[];
 };
 
 interface RangeParams {
@@ -42,13 +46,40 @@ function buildUrl(path: string, params?: Record<string, string | number | undefi
   return url;
 }
 
-async function request<T>(path: string, params?: Record<string, string | number | undefined>) {
+async function request<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>,
+  init?: RequestInit,
+) {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+
   const response = await fetch(buildUrl(path, params), {
-    headers: { Accept: "application/json" },
+    ...init,
+    headers,
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let message = `Request failed: ${response.status}`;
+
+    try {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const body = (await response.json()) as { error?: unknown };
+        if (typeof body.error === "string" && body.error.trim()) {
+          message = body.error;
+        }
+      } else {
+        const text = await response.text();
+        if (text.trim()) {
+          message = text;
+        }
+      }
+    } catch {
+      // Fall back to the default status message.
+    }
+
+    throw new Error(message);
   }
 
   return (await response.json()) as T;
@@ -106,6 +137,13 @@ function normalizeDashboard(response: RawDashboardResponse): DashboardResponse {
   };
 }
 
+function normalizeReadingsPage(response: RawReadingsPage): ReadingsPage {
+  return {
+    ...response,
+    items: response.items.map(normalizeReading).filter(isPresent),
+  };
+}
+
 export function getDashboard(tzOffsetMinutes: number) {
   return request<RawDashboardResponse>("/api/dashboard", {
     tz_offset_minutes: tzOffsetMinutes,
@@ -137,10 +175,17 @@ export function getAlerts(range: RangeParams & { tzOffsetMinutes: number }) {
   }).then((rows) => rows.map(normalizeAlert).filter(isPresent));
 }
 
-export function getReadings(range: RangeParams & { limit: number }) {
-  return request<RawReading[]>("/api/readings", {
+export function getReadings(range: RangeParams & { page: number; pageSize: number }) {
+  return request<RawReadingsPage>("/api/readings", {
     from: range.from,
     to: range.to,
-    limit: range.limit,
-  }).then((rows) => rows.map(normalizeReading).filter(isPresent));
+    page: range.page,
+    page_size: range.pageSize,
+  }).then(normalizeReadingsPage);
+}
+
+export function deleteReading(id: number) {
+  return request<{ deleted: boolean; id: number }>(`/api/readings/${id}`, undefined, {
+    method: "DELETE",
+  });
 }

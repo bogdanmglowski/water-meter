@@ -1,13 +1,20 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getAlerts, getConsumption, getCumulative, getDashboard, getReadings } from "./api";
+import {
+  deleteReading,
+  getAlerts,
+  getConsumption,
+  getCumulative,
+  getDashboard,
+  getReadings,
+} from "./api";
 import { AlertPanel } from "./components/AlertPanel";
 import { ChartCard } from "./components/ChartCard";
 import { EChart, type WaterMeterChartOption } from "./components/EChart";
 import { MetricCard } from "./components/MetricCard";
 import { ReadingsTable } from "./components/ReadingsTable";
-import type { Bucket, RangePreset } from "./types";
+import type { Bucket, RangePreset, Reading } from "./types";
 import {
   buildRange,
   formatBucketLabel,
@@ -122,6 +129,7 @@ function rangeToInputs(range: AppliedRange): RangeInputs {
 
 export default function App() {
   const readingsPerPage = 30;
+  const queryClient = useQueryClient();
   const [page, setPage] = useState<AppPage>(() => pageFromHash(window.location.hash));
   const [preset, setPreset] = useState<RangePreset>("30d");
   const [bucket, setBucket] = useState<Bucket>("day");
@@ -133,6 +141,7 @@ export default function App() {
   const [isEditingRange, setIsEditingRange] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [readingsPage, setReadingsPage] = useState(1);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
   useEffect(() => {
@@ -300,14 +309,42 @@ export default function App() {
   });
 
   const readingsQuery = useQuery({
-    queryKey: ["readings", activeRange.from, activeRange.to],
+    queryKey: ["readings", activeRange.from, activeRange.to, readingsPage, readingsPerPage],
     queryFn: () =>
       getReadings({
         ...activeRange,
-        limit: 2_000,
+        page: readingsPage,
+        pageSize: readingsPerPage,
       }),
     staleTime: 60_000,
     enabled: page === "raw-readings",
+  });
+
+  const deleteReadingMutation = useMutation({
+    mutationFn: (id: number) => deleteReading(id),
+    onSuccess: async () => {
+      setDeleteError(null);
+      const currentPageTotal = readingsQuery.data?.items.length ?? 0;
+      const nextTotal = Math.max(0, (readingsQuery.data?.totalCount ?? 0) - 1);
+      const shouldGoBackPage = readingsPage > 1 && currentPageTotal <= 1 && nextTotal > 0;
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["readings"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["cumulative"] }),
+        queryClient.invalidateQueries({ queryKey: ["consumption"] }),
+        queryClient.invalidateQueries({ queryKey: ["baseline"] }),
+        queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+      ]);
+
+      if (shouldGoBackPage) {
+        setReadingsPage((current) => current - 1);
+        return;
+      }
+    },
+    onError: (error) => {
+      setDeleteError(error instanceof Error ? error.message : "Delete request failed.");
+    },
   });
 
   const error = isDashboardPage
@@ -322,17 +359,23 @@ export default function App() {
 
   const dailySeries = baselineQuery.data ?? [];
   const dailyBaseline = rollingAverage(dailySeries, 7);
-  const rawReadings = readingsQuery.data ?? [];
-  const totalReadingPages = Math.max(1, Math.ceil(rawReadings.length / readingsPerPage));
-  const activeReadingsPage = Math.min(readingsPage, totalReadingPages);
-  const pagedReadings = rawReadings.slice(
-    (activeReadingsPage - 1) * readingsPerPage,
-    activeReadingsPage * readingsPerPage,
-  );
+  const rawReadingsPage = readingsQuery.data;
+  const rawReadings = rawReadingsPage?.items ?? [];
+  const totalReadingPages = rawReadingsPage?.totalPages ?? 1;
+  const activeReadingsPage = rawReadingsPage?.page ?? readingsPage;
+  const totalReadings = rawReadingsPage?.totalCount ?? 0;
 
-  useEffect(() => {
-    setReadingsPage((current) => Math.min(current, totalReadingPages));
-  }, [totalReadingPages]);
+  function handleDeleteReading(reading: Reading) {
+    const shouldDelete = window.confirm(
+      `Delete reading from ${formatTimestamp(reading.recordedAt)}? This will remove it from the database.`,
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    deleteReadingMutation.mutate(reading.id);
+  }
 
   const cumulativeOption: WaterMeterChartOption = {
     backgroundColor: "transparent",
@@ -750,27 +793,37 @@ export default function App() {
                     by the chart pages.
                   </p>
                 </div>
-                <span className="count-pill">{rawReadings.length}</span>
+                <span className="count-pill">{totalReadings}</span>
               </div>
 
               {rangeControls}
 
               <p className="range-meta">
-                Showing up to 2,000 rows for {activeRangeSummary}. Values remain cumulative, not
+                Server pagination is active for {activeRangeSummary}. Values remain cumulative, not
                 per-bucket deltas.
               </p>
             </section>
 
+            {deleteError ? (
+              <section className="card error-card">
+                <strong>Delete request failed.</strong>
+                <p>{deleteError}</p>
+              </section>
+            ) : null}
+
             <ReadingsTable
-              readings={pagedReadings}
+              readings={rawReadings}
               currentPage={activeReadingsPage}
               totalPages={totalReadingPages}
-              totalReadings={rawReadings.length}
+              totalReadings={totalReadings}
               pageSize={readingsPerPage}
+              isDeletingId={deleteReadingMutation.isPending ? deleteReadingMutation.variables ?? null : null}
+              isDeletePending={deleteReadingMutation.isPending}
               onPreviousPage={() => setReadingsPage((current) => Math.max(1, current - 1))}
               onNextPage={() =>
                 setReadingsPage((current) => Math.min(totalReadingPages, current + 1))
               }
+              onDeleteReading={handleDeleteReading}
             />
           </>
         )}
