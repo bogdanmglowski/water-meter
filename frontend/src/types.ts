@@ -36,6 +36,18 @@ export interface AlertItem {
   endsAt: string;
 }
 
+export interface AnomalyItem {
+  id: number;
+  recordedAt: string;
+  meterValueM3: number;
+  previousRecordedAt: string;
+  previousMeterValueM3: number;
+  deltaM3: number;
+  thresholdM3: number;
+  source: string;
+  createdAt: string;
+}
+
 export interface DashboardSummary {
   todayM3: number;
   last24hM3: number;

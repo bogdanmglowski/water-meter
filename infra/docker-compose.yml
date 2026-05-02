@@ -98,7 +98,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      db:
+      backend:
         condition: service_healthy
 
 volumes:

@@ -11,6 +11,19 @@ pub struct DbReading {
     pub source: String,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct DbAnomaly {
+    pub id: i64,
+    pub recorded_at: OffsetDateTime,
+    pub meter_value_m3: i64,
+    pub previous_recorded_at: OffsetDateTime,
+    pub previous_meter_value_m3: i64,
+    pub delta_m3: i64,
+    pub threshold_m3: i64,
+    pub source: String,
+    pub created_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
@@ -46,6 +59,26 @@ pub struct ReadingsPageDto {
 pub struct DeleteReadingResponse {
     pub deleted: bool,
     pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AnomalyDto {
+    pub id: i64,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub recorded_at: OffsetDateTime,
+    pub meter_value_m3: i64,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub previous_recorded_at: OffsetDateTime,
+    pub previous_meter_value_m3: i64,
+    pub delta_m3: i64,
+    pub threshold_m3: i64,
+    pub source: String,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -142,7 +175,8 @@ mod tests {
     use time::macros::datetime;
 
     use super::{
-        AlertDto, AlertSeverity, DashboardResponse, DashboardSummary, ReadingDto, UsagePoint,
+        AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary, ReadingDto,
+        UsagePoint,
     };
 
     #[test]
@@ -184,9 +218,22 @@ mod tests {
             ends_at: datetime!(2026-04-25 23:00 UTC),
         };
 
+        let anomaly = AnomalyDto {
+            id: 12,
+            recorded_at: datetime!(2026-04-26 09:08:07 UTC),
+            meter_value_m3: 1600,
+            previous_recorded_at: datetime!(2026-04-26 09:03:07 UTC),
+            previous_meter_value_m3: 1450,
+            delta_m3: 150,
+            threshold_m3: 100,
+            source: "reader".to_owned(),
+            created_at: datetime!(2026-04-26 09:08:08 UTC),
+        };
+
         let response_json = serde_json::to_value(response).expect("dashboard serializes");
         let point_json = serde_json::to_value(point).expect("usage point serializes");
         let alert_json = serde_json::to_value(alert).expect("alert serializes");
+        let anomaly_json = serde_json::to_value(anomaly).expect("anomaly serializes");
 
         assert_eq!(response_json["generatedAt"], json!("2026-04-26T10:11:12Z"));
         assert_eq!(response_json["latestReading"]["id"], json!(7));
@@ -198,5 +245,8 @@ mod tests {
         assert_eq!(point_json["bucketEnd"], json!("2026-04-21T00:00:00Z"));
         assert_eq!(alert_json["startsAt"], json!("2026-04-25T22:00:00Z"));
         assert_eq!(alert_json["endsAt"], json!("2026-04-25T23:00:00Z"));
+        assert_eq!(anomaly_json["recordedAt"], json!("2026-04-26T09:08:07Z"));
+        assert_eq!(anomaly_json["previousRecordedAt"], json!("2026-04-26T09:03:07Z"));
+        assert_eq!(anomaly_json["createdAt"], json!("2026-04-26T09:08:08Z"));
     }
 }

@@ -4,11 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteReading,
   getAlerts,
+  getAnomalies,
   getConsumption,
   getCumulative,
   getDashboard,
   getReadings,
 } from "./api";
+import { AnomaliesTable } from "./components/AnomaliesTable";
 import { AlertPanel } from "./components/AlertPanel";
 import { ChartCard } from "./components/ChartCard";
 import { EChart, type WaterMeterChartOption } from "./components/EChart";
@@ -40,7 +42,8 @@ type AppPage =
   | "cumulative-trend"
   | "interval-consumption"
   | "daily-baseline"
-  | "raw-readings";
+  | "raw-readings"
+  | "anomalies";
 
 const pages = [
   {
@@ -67,6 +70,11 @@ const pages = [
     value: "raw-readings" as const,
     label: "Raw Readings",
     detail: "Direct cumulative values from PostgreSQL.",
+  },
+  {
+    value: "anomalies" as const,
+    label: "Anomalies",
+    detail: "Skipped abnormal jumps captured during ingestion.",
   },
 ];
 
@@ -101,6 +109,8 @@ function pageFromHash(hash: string): AppPage {
       return "daily-baseline";
     case "#raw-readings":
       return "raw-readings";
+    case "#anomalies":
+      return "anomalies";
     default:
       return "cumulative-trend";
   }
@@ -246,6 +256,7 @@ export default function App() {
   const isCumulativePage = page === "cumulative-trend";
   const isConsumptionPage = page === "interval-consumption";
   const isBaselinePage = page === "daily-baseline";
+  const isAnomaliesPage = page === "anomalies";
   const isChartPage = isCumulativePage || isConsumptionPage || isBaselinePage;
   const activePresetLabel =
     presets.find((option) => option.value === preset)?.label ?? "Selected range";
@@ -308,6 +319,13 @@ export default function App() {
     enabled: isCumulativePage,
   });
 
+  const anomaliesQuery = useQuery({
+    queryKey: ["anomalies", activeRange.from, activeRange.to],
+    queryFn: () => getAnomalies(activeRange),
+    staleTime: 60_000,
+    enabled: isAnomaliesPage,
+  });
+
   const readingsQuery = useQuery({
     queryKey: ["readings", activeRange.from, activeRange.to, readingsPage, readingsPerPage],
     queryFn: () =>
@@ -330,6 +348,7 @@ export default function App() {
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["readings"] }),
+        queryClient.invalidateQueries({ queryKey: ["anomalies"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
         queryClient.invalidateQueries({ queryKey: ["cumulative"] }),
         queryClient.invalidateQueries({ queryKey: ["consumption"] }),
@@ -352,10 +371,12 @@ export default function App() {
     : isCumulativePage
       ? cumulativeQuery.error || alertsQuery.error
       : isConsumptionPage
-        ? consumptionQuery.error
-        : isBaselinePage
-          ? baselineQuery.error
-          : readingsQuery.error;
+          ? consumptionQuery.error
+          : isBaselinePage
+            ? baselineQuery.error
+            : page === "raw-readings"
+              ? readingsQuery.error
+              : anomaliesQuery.error;
 
   const dailySeries = baselineQuery.data ?? [];
   const dailyBaseline = rollingAverage(dailySeries, 7);
@@ -506,11 +527,13 @@ export default function App() {
     ? "A cumulative meter feed rendered as a neon control room for live household usage."
     : isCumulativePage
       ? "Track the raw meter register over time to spot resets, stalls, and sudden jumps."
-      : isConsumptionPage
+    : isConsumptionPage
         ? "Study grouped consumption bursts across hourly to yearly buckets."
         : isBaselinePage
           ? "Compare daily usage for the selected window against a rolling seven-day average."
-          : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it.";
+          : isAnomaliesPage
+            ? "Review OCR readings that were skipped because they jumped too far above the previous accepted value."
+            : "Inspect the raw cumulative register stream exactly as PostgreSQL stores it.";
   const rangeControls = (
     <>
       <div className="control-group">
@@ -780,6 +803,31 @@ export default function App() {
                 </ChartCard>
               ) : null}
             </section>
+          </>
+        ) : isAnomaliesPage ? (
+          <>
+            <section className="card page-intro">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Skipped OCR Jumps</span>
+                  <h2>Inspect anomaly readings directly</h2>
+                  <p>
+                    These readings were not inserted into the main meter feed because they exceeded
+                    the configured positive jump threshold.
+                  </p>
+                </div>
+                <span className="count-pill">{anomaliesQuery.data?.length ?? 0}</span>
+              </div>
+
+              {rangeControls}
+
+              <p className="range-meta">
+                Showing skipped anomaly rows for {activeRangeSummary}. Each row includes the
+                previous accepted reading and the jump amount that triggered the skip.
+              </p>
+            </section>
+
+            <AnomaliesTable anomalies={anomaliesQuery.data ?? []} />
           </>
         ) : (
           <>

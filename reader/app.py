@@ -59,6 +59,7 @@ class CropRect:
 class PostgresTarget:
     database_url: str
     source: str
+    anomaly_threshold: int
 
 
 HELP_EPILOG = """Examples:
@@ -168,12 +169,83 @@ class PostgresWriter:
     def connect(self) -> None:
         self._ensure_connection()
 
+    def _fetch_previous_reading(self, cursor: Any, recorded_at: datetime) -> tuple[datetime, int] | None:
+        cursor.execute(
+            """
+            SELECT recorded_at, meter_value_m3
+            FROM meter_readings
+            WHERE recorded_at < %s
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT 1
+            """,
+            (recorded_at,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        previous_recorded_at, previous_value = row
+        return previous_recorded_at, int(previous_value)
+
+    def _persist_anomaly(
+        self,
+        cursor: Any,
+        *,
+        recorded_at: datetime,
+        value: int,
+        previous_recorded_at: datetime,
+        previous_value: int,
+    ) -> None:
+        delta = value - previous_value
+        cursor.execute(
+            """
+            INSERT INTO meter_reading_anomalies (
+                recorded_at,
+                meter_value_m3,
+                previous_recorded_at,
+                previous_meter_value_m3,
+                delta_m3,
+                threshold_m3,
+                source
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (recorded_at) DO UPDATE
+            SET meter_value_m3 = EXCLUDED.meter_value_m3,
+                previous_recorded_at = EXCLUDED.previous_recorded_at,
+                previous_meter_value_m3 = EXCLUDED.previous_meter_value_m3,
+                delta_m3 = EXCLUDED.delta_m3,
+                threshold_m3 = EXCLUDED.threshold_m3,
+                source = EXCLUDED.source
+            """,
+            (
+                recorded_at,
+                value,
+                previous_recorded_at,
+                previous_value,
+                delta,
+                self.target.anomaly_threshold,
+                self.target.source,
+            ),
+        )
+
     def persist(self, timestamp: datetime, value: int) -> None:
         recorded_at = normalize_postgres_timestamp(timestamp)
         connection = self._ensure_connection()
 
         try:
             with connection.cursor() as cursor:
+                previous = self._fetch_previous_reading(cursor, recorded_at)
+                if previous is not None:
+                    previous_recorded_at, previous_value = previous
+                    if value - previous_value > self.target.anomaly_threshold:
+                        self._persist_anomaly(
+                            cursor,
+                            recorded_at=recorded_at,
+                            value=value,
+                            previous_recorded_at=previous_recorded_at,
+                            previous_value=previous_value,
+                        )
+                        return
+
                 cursor.execute(
                     """
                     INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
@@ -382,6 +454,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="reader",
         help="Value written into the `source` column for PostgreSQL inserts.",
     )
+    parser.add_argument(
+        "--pg-anomaly-threshold",
+        type=int,
+        default=100,
+        help="Skip inserts when the reading jumps above the previous value by more than this amount, and log them as anomalies.",
+    )
     return parser
 
 
@@ -416,8 +494,14 @@ def parse_postgres_target(args: argparse.Namespace, parser: argparse.ArgumentPar
         parser.error("--pg-write requires --pg-database-url or the DATABASE_URL environment variable")
     if not args.pg_source.strip():
         parser.error("--pg-source must not be empty")
+    if args.pg_anomaly_threshold < 0:
+        parser.error("--pg-anomaly-threshold must be greater than or equal to 0")
 
-    return PostgresTarget(database_url=database_url, source=args.pg_source)
+    return PostgresTarget(
+        database_url=database_url,
+        source=args.pg_source,
+        anomaly_threshold=args.pg_anomaly_threshold,
+    )
 
 
 def open_camera(camera_index: int) -> cv2.VideoCapture:

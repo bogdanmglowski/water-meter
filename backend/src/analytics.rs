@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::models::{
-    AlertDto, AlertSeverity, DashboardResponse, DashboardSummary, DbReading, ReadingDto,
-    ReadingsPageDto, UsagePoint,
+    AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary, DbAnomaly,
+    DbReading, ReadingDto, ReadingsPageDto, UsagePoint,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +59,10 @@ pub fn build_readings(readings: &[DbReading]) -> Vec<ReadingDto> {
     readings.iter().map(map_reading).collect()
 }
 
+pub fn build_anomalies(anomalies: &[DbAnomaly]) -> Vec<AnomalyDto> {
+    anomalies.iter().map(map_anomaly).collect()
+}
+
 pub fn resolve_readings_page(requested_page: usize, page_size: usize, total_count: usize) -> ReadingsPage {
     let page_size = page_size.max(1);
     let total_pages = if total_count == 0 {
@@ -92,6 +96,7 @@ pub fn build_dashboard(
     now: OffsetDateTime,
     tz_offset_minutes: i32,
     active_alerts: usize,
+    logged_anomaly_count: usize,
 ) -> DashboardResponse {
     let intervals = derive_intervals(readings);
     let today_start = start_of_local_day_utc(now, tz_offset_minutes);
@@ -105,10 +110,8 @@ pub fn build_dashboard(
             last_7d_m3: sum_usage_between(&intervals, now - Duration::days(7), now),
             month_to_date_m3: sum_usage_between(&intervals, month_start, now),
             active_alerts,
-            anomaly_count: intervals
-                .iter()
-                .filter(|interval| interval.negative_delta)
-                .count(),
+            anomaly_count: intervals.iter().filter(|interval| interval.negative_delta).count()
+                + logged_anomaly_count,
         },
         latest_reading: readings.last().map(map_reading),
     }
@@ -376,6 +379,20 @@ fn map_reading(reading: &DbReading) -> ReadingDto {
     }
 }
 
+fn map_anomaly(anomaly: &DbAnomaly) -> AnomalyDto {
+    AnomalyDto {
+        id: anomaly.id,
+        recorded_at: anomaly.recorded_at,
+        meter_value_m3: anomaly.meter_value_m3,
+        previous_recorded_at: anomaly.previous_recorded_at,
+        previous_meter_value_m3: anomaly.previous_meter_value_m3,
+        delta_m3: anomaly.delta_m3,
+        threshold_m3: anomaly.threshold_m3,
+        source: anomaly.source.clone(),
+        created_at: anomaly.created_at,
+    }
+}
+
 fn shift_to_local(timestamp: OffsetDateTime, tz_offset_minutes: i32) -> OffsetDateTime {
     timestamp + Duration::minutes(i64::from(tz_offset_minutes))
 }
@@ -503,7 +520,7 @@ mod tests {
             reading(datetime!(2026-04-02 01:00 UTC), 18),
         ];
 
-        let summary = build_dashboard(&readings, datetime!(2026-04-02 03:00 UTC), 0, 2).summary;
+        let summary = build_dashboard(&readings, datetime!(2026-04-02 03:00 UTC), 0, 2, 0).summary;
 
         assert_eq!(summary.today_m3, 3);
         assert_eq!(summary.last_24h_m3, 9);

@@ -3,7 +3,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
 
-use crate::models::DbReading;
+use crate::models::{DbAnomaly, DbReading};
 
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
@@ -74,6 +74,54 @@ pub async fn delete_reading(pool: &PgPool, id: i64) -> Result<u64, sqlx::Error> 
     .await?;
 
     Ok(result.rows_affected())
+}
+
+pub async fn fetch_anomalies(
+    pool: &PgPool,
+    from: Option<OffsetDateTime>,
+    to: Option<OffsetDateTime>,
+) -> Result<Vec<DbAnomaly>, sqlx::Error> {
+    sqlx::query_as::<_, DbAnomaly>(
+        r#"
+        SELECT
+            id,
+            recorded_at,
+            meter_value_m3,
+            previous_recorded_at,
+            previous_meter_value_m3,
+            delta_m3,
+            threshold_m3,
+            source,
+            created_at
+        FROM meter_reading_anomalies
+        WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
+          AND ($2::timestamptz IS NULL OR recorded_at <= $2)
+        ORDER BY recorded_at DESC, id DESC
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn count_anomalies(
+    pool: &PgPool,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM meter_reading_anomalies
+        WHERE recorded_at >= $1
+          AND recorded_at <= $2
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await
 }
 
 pub async fn fetch_window_readings(

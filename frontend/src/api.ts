@@ -1,5 +1,6 @@
 import type {
   AlertItem,
+  AnomalyItem,
   Bucket,
   DashboardResponse,
   Reading,
@@ -18,6 +19,14 @@ type RawUsagePoint = Omit<UsagePoint, "bucketStart" | "bucketEnd"> & {
 type RawAlertItem = Omit<AlertItem, "startsAt" | "endsAt"> & {
   startsAt: unknown;
   endsAt: unknown;
+};
+type RawAnomalyItem = Omit<
+  AnomalyItem,
+  "recordedAt" | "previousRecordedAt" | "createdAt"
+> & {
+  recordedAt: unknown;
+  previousRecordedAt: unknown;
+  createdAt: unknown;
 };
 type RawDashboardResponse = Omit<DashboardResponse, "generatedAt" | "latestReading"> & {
   generatedAt: unknown;
@@ -129,6 +138,22 @@ function normalizeAlert(alert: RawAlertItem): AlertItem | null {
   };
 }
 
+function normalizeAnomaly(anomaly: RawAnomalyItem): AnomalyItem | null {
+  const recordedAt = toIsoTimestamp(anomaly.recordedAt);
+  const previousRecordedAt = toIsoTimestamp(anomaly.previousRecordedAt);
+  const createdAt = toIsoTimestamp(anomaly.createdAt);
+  if (!recordedAt || !previousRecordedAt || !createdAt) {
+    return null;
+  }
+
+  return {
+    ...anomaly,
+    recordedAt,
+    previousRecordedAt,
+    createdAt,
+  };
+}
+
 function normalizeDashboard(response: RawDashboardResponse): DashboardResponse {
   return {
     ...response,
@@ -173,6 +198,13 @@ export function getAlerts(range: RangeParams & { tzOffsetMinutes: number }) {
     to: range.to,
     tz_offset_minutes: range.tzOffsetMinutes,
   }).then((rows) => rows.map(normalizeAlert).filter(isPresent));
+}
+
+export function getAnomalies(range: RangeParams) {
+  return request<RawAnomalyItem[]>("/api/anomalies", {
+    from: range.from,
+    to: range.to,
+  }).then((rows) => rows.map(normalizeAnomaly).filter(isPresent));
 }
 
 export function getReadings(range: RangeParams & { page: number; pageSize: number }) {

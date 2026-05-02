@@ -73,6 +73,7 @@ Supported arguments:
 - `--pg-write`: enables database inserts.
 - `--pg-database-url`: PostgreSQL connection string. If omitted, the app falls back to `DATABASE_URL`.
 - `--pg-source`: value written into the `source` column. Default: `reader`.
+- `--pg-anomaly-threshold`: skip inserts when the reading jumps above the previous accepted value by more than this amount. Default: `100`.
 
 Notes:
 
@@ -116,6 +117,7 @@ READER_Y2=414
 READER_CROP_OUTPUT=/data/meter-crop.png
 READER_PG_WRITE=true
 READER_PG_SOURCE=reader-docker
+READER_PG_ANOMALY_THRESHOLD=100
 ```
 
 Docker note:

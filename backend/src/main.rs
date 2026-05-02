@@ -19,8 +19,9 @@ use crate::analytics::Bucket;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AlertDto, ConsumptionQuery, DashboardQuery, DashboardResponse, DeleteReadingResponse,
-    HealthResponse, RangeQuery, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
+    AlertDto, AnomalyDto, ConsumptionQuery, DashboardQuery, DashboardResponse,
+    DeleteReadingResponse, HealthResponse, RangeQuery, ReadingDto, ReadingsPageDto,
+    ReadingsQuery, UsagePoint,
 };
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ struct AppState {
         dashboard,
         readings,
         delete_reading,
+        anomalies,
         cumulative_series,
         consumption_series,
         alerts,
@@ -46,6 +48,7 @@ struct AppState {
             ReadingDto,
             ReadingsPageDto,
             DeleteReadingResponse,
+            AnomalyDto,
             UsagePoint,
             AlertDto,
             DashboardResponse,
@@ -80,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dashboard", get(dashboard))
         .route("/api/readings", get(readings))
         .route("/api/readings/{id}", delete(delete_reading))
+        .route("/api/anomalies", get(anomalies))
         .route("/api/series/cumulative", get(cumulative_series))
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
@@ -127,8 +131,16 @@ async fn dashboard(
     let tz_offset_minutes = normalize_tz_offset(query.tz_offset_minutes);
     let from = now - Duration::days(120);
     let readings = db::fetch_window_readings(&state.pool, from, now).await?;
+    let anomaly_count = usize::try_from(db::count_anomalies(&state.pool, from, now).await?)
+        .map_err(|_| AppError::Internal("anomaly count overflow".to_owned()))?;
     let alerts = analytics::build_alerts(&readings, now, tz_offset_minutes, from, now);
-    let response = analytics::build_dashboard(&readings, now, tz_offset_minutes, alerts.len());
+    let response = analytics::build_dashboard(
+        &readings,
+        now,
+        tz_offset_minutes,
+        alerts.len(),
+        anomaly_count,
+    );
     Ok(Json(response))
 }
 
@@ -184,6 +196,22 @@ async fn delete_reading(
     }
 
     Ok(Json(DeleteReadingResponse { deleted: true, id }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/anomalies",
+    responses((status = 200, description = "Skipped anomaly readings", body = [AnomalyDto]))
+)]
+async fn anomalies(
+    State(state): State<AppState>,
+    Query(query): Query<RangeQuery>,
+) -> AppResult<Json<Vec<AnomalyDto>>> {
+    let from = parse_optional_timestamp(query.from.as_deref())?;
+    let to = parse_optional_timestamp(query.to.as_deref())?;
+    validate_range(from, to)?;
+    let anomalies = db::fetch_anomalies(&state.pool, from, to).await?;
+    Ok(Json(analytics::build_anomalies(&anomalies)))
 }
 
 #[utoipa::path(

@@ -22,7 +22,6 @@ impl Config {
             .unwrap_or(8080);
         let client_origin =
             env::var("CLIENT_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".to_owned());
-
         Ok(Self {
             database_url,
             bind_addr: SocketAddr::new(host, port),

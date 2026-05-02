@@ -24,7 +24,7 @@ class FakeCamera:
 
 
 def test_postgres_writer_persists_upsert_query() -> None:
-    executed: dict[str, object] = {}
+    executed: dict[str, object] = {"queries": []}
 
     class FakeCursor:
         def __enter__(self) -> "FakeCursor":
@@ -33,9 +33,11 @@ def test_postgres_writer_persists_upsert_query() -> None:
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def execute(self, query: str, params: tuple[object, ...]) -> None:
-            executed["query"] = query
-            executed["params"] = params
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed["queries"].append((query, params))
+
+        def fetchone(self) -> None:
+            return None
 
     class FakeConnection:
         closed = False
@@ -60,6 +62,7 @@ def test_postgres_writer_persists_upsert_query() -> None:
         PostgresTarget(
             database_url="postgres://meter:meter@db:5432/water_meter",
             source="reader-test",
+            anomaly_threshold=100,
         )
     )
 
@@ -67,12 +70,68 @@ def test_postgres_writer_persists_upsert_query() -> None:
 
     assert executed["database_url"] == "postgres://meter:meter@db:5432/water_meter"
     assert executed["autocommit"] is True
-    assert "INSERT INTO meter_readings" in str(executed["query"])
-    assert "ON CONFLICT (recorded_at) DO UPDATE" in str(executed["query"])
-    params = executed["params"]
+    queries = [item for item in executed["queries"] if item[1] is not None]
+    assert len(queries) == 2
+    assert "SELECT recorded_at, meter_value_m3" in str(queries[0][0])
+    assert "INSERT INTO meter_readings" in str(queries[1][0])
+    assert "ON CONFLICT (recorded_at) DO UPDATE" in str(queries[1][0])
+    params = queries[1][1]
     assert isinstance(params, tuple)
     assert params[1:] == (12345, "reader-test")
     assert getattr(params[0], "tzinfo", None) is not None
+
+
+def test_postgres_writer_skips_large_positive_jump_and_records_anomaly() -> None:
+    executed: dict[str, object] = {"queries": []}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed["queries"].append((query, params))
+
+        def fetchone(self) -> tuple[datetime, int]:
+            return (datetime(2026, 3, 16, 10, 15, 0), 1000)
+
+    class FakeConnection:
+        closed = False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    def fake_connect(database_url: str, autocommit: bool) -> FakeConnection:
+        executed["database_url"] = database_url
+        executed["autocommit"] = autocommit
+        return FakeConnection()
+
+    app._PSYCOPG_IMPORT_ERROR = None
+    app.psycopg = SimpleNamespace(connect=fake_connect)
+
+    writer = PostgresWriter(
+        PostgresTarget(
+            database_url="postgres://meter:meter@db:5432/water_meter",
+            source="reader-test",
+            anomaly_threshold=100,
+        )
+    )
+
+    writer.persist(datetime(2026, 3, 16, 10, 20, 30), 1205)
+
+    queries = [item for item in executed["queries"] if item[1] is not None]
+    assert len(queries) == 2
+    assert "SELECT recorded_at, meter_value_m3" in str(queries[0][0])
+    assert "INSERT INTO meter_reading_anomalies" in str(queries[1][0])
+    assert "INSERT INTO meter_readings" not in str(queries[1][0])
+    params = queries[1][1]
+    assert isinstance(params, tuple)
+    assert params[1:] == (1205, datetime(2026, 3, 16, 10, 15, 0), 1000, 205, 100, "reader-test")
 
 
 def test_normalize_ocr_text() -> None:
@@ -337,6 +396,7 @@ def test_parse_postgres_target_uses_explicit_database_url() -> None:
     assert parse_postgres_target(args, parser) == PostgresTarget(
         database_url="postgres://meter:meter@localhost:5432/water_meter",
         source="camera-reader",
+        anomaly_threshold=100,
     )
 
 
@@ -350,6 +410,26 @@ def test_parse_postgres_target_uses_database_url_environment_variable(
     assert parse_postgres_target(args, parser) == PostgresTarget(
         database_url="postgres://meter:meter@db:5432/water_meter",
         source="reader",
+        anomaly_threshold=100,
+    )
+
+
+def test_parse_postgres_target_uses_explicit_anomaly_threshold() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        [
+            "--pg-write",
+            "--pg-database-url",
+            "postgres://meter:meter@localhost:5432/water_meter",
+            "--pg-anomaly-threshold",
+            "250",
+        ]
+    )
+
+    assert parse_postgres_target(args, parser) == PostgresTarget(
+        database_url="postgres://meter:meter@localhost:5432/water_meter",
+        source="reader",
+        anomaly_threshold=250,
     )
 
 
@@ -639,6 +719,7 @@ def test_main_initializes_postgres_writer_when_enabled(
         PostgresTarget(
             database_url="postgres://meter:meter@db:5432/water_meter",
             source="camera-reader",
+            anomaly_threshold=100,
         )
     ]
     assert len(persisted_writers) == 1

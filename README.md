@@ -236,6 +236,7 @@ Reader profile notes:
 - set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
 - the reader is USB-only, always saves original frames, always writes a crop file, and reads the meter value through the Ollama HTTP API with model `glm-ocr`
 - when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL
+- `READER_PG_ANOMALY_THRESHOLD` skips unusually large positive jumps and stores them in `meter_reading_anomalies` instead of `meter_readings`
 - crop coordinates are required
 - the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`
 - host Ollama must listen on an address reachable from Docker
@@ -335,7 +336,8 @@ Implemented endpoints:
 
 - `GET /api/health`
 - `GET /api/dashboard?tz_offset_minutes=120`
-- `GET /api/readings?from=...&to=...&limit=120`
+- `GET /api/readings?from=...&to=...&page=1&page_size=30`
+- `GET /api/anomalies?from=...&to=...`
 - `GET /api/series/cumulative?from=...&to=...`
 - `GET /api/series/consumption?from=...&to=...&bucket=day`
 - `GET /api/alerts?from=...&to=...&tz_offset_minutes=120`
