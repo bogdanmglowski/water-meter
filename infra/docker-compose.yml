@@ -45,10 +45,13 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:${CLIENT_PORT:-5173}}
+      READER_RUNTIME_DIR: /reader-runtime
       RUST_LOG: ${RUST_LOG:-info,tower_http=info}
     depends_on:
       seed:
         condition: service_completed_successfully
+    volumes:
+      - ../reader/runtime:/reader-runtime:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
       interval: 10s
@@ -82,6 +85,7 @@ services:
       READER_CAMERA_INDEX: ${READER_CAMERA_INDEX:-0}
       READER_INTERVAL_SECONDS: ${READER_INTERVAL_SECONDS:-5}
       READER_PICTURES_DIR: /data/pictures
+      READER_PROCESSED_PICTURES_DIR: /data/processed
       READER_PERSIST_EVERY: ${READER_PERSIST_EVERY:-1}
       READER_CROP_OUTPUT: ${READER_CROP_OUTPUT:-/data/meter-crop.png}
       READER_X1: ${READER_X1:-159}
@@ -133,4 +137,4 @@ networks:
     name: ${WATER_METER_NETWORK:-water-meter_default}
     ipam:
       config:
-        - subnet: ${WATER_METER_SUBNET:-172.24.0.0/16}
+        - subnet: ${WATER_METER_SUBNET:-172.28.0.0/16}

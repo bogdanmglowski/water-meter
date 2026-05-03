@@ -169,14 +169,56 @@ pub struct ConsumptionQuery {
     pub tz_offset_minutes: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderImageItem {
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+    pub captured_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderImageDayGroup {
+    pub day: String,
+    pub items: Vec<ReaderImageItem>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderGallerySection {
+    pub page: usize,
+    pub page_size: usize,
+    pub total_days: usize,
+    pub total_pages: usize,
+    pub day_groups: Vec<ReaderImageDayGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReaderGalleryQuery {
+    pub original_page: Option<usize>,
+    pub processed_page: Option<usize>,
+    pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderGalleryResponse {
+    pub current_crop_url: Option<String>,
+    pub original_images: ReaderGallerySection,
+    pub processed_images: ReaderGallerySection,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
     use time::macros::datetime;
 
     use super::{
-        AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary, ReadingDto,
-        UsagePoint,
+        AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary,
+        ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem,
+        ReadingDto, UsagePoint,
     };
 
     #[test]
@@ -248,5 +290,49 @@ mod tests {
         assert_eq!(anomaly_json["recordedAt"], json!("2026-04-26T09:08:07Z"));
         assert_eq!(anomaly_json["previousRecordedAt"], json!("2026-04-26T09:03:07Z"));
         assert_eq!(anomaly_json["createdAt"], json!("2026-04-26T09:08:08Z"));
+    }
+
+    #[test]
+    fn reader_gallery_serializes_in_camel_case() {
+        let gallery = ReaderGalleryResponse {
+            current_crop_url: Some("/api/reader/images/current/meter-crop.png".to_owned()),
+            original_images: ReaderGallerySection {
+                page: 1,
+                page_size: 7,
+                total_days: 1,
+                total_pages: 1,
+                day_groups: vec![ReaderImageDayGroup {
+                    day: "2026-03-16".to_owned(),
+                    items: vec![ReaderImageItem {
+                        kind: "original".to_owned(),
+                        name: "2026-03-16_10-20-50.jpg".to_owned(),
+                        url: "/api/reader/images/original/2026-03-16/2026-03-16_10-20-50.jpg"
+                            .to_owned(),
+                        captured_at: "2026-03-16T10:20:50Z".to_owned(),
+                    }],
+                }],
+            },
+            processed_images: ReaderGallerySection {
+                page: 1,
+                page_size: 7,
+                total_days: 0,
+                total_pages: 1,
+                day_groups: vec![],
+            },
+        };
+
+        let gallery_json = serde_json::to_value(gallery).expect("gallery serializes");
+
+        assert_eq!(
+            gallery_json["currentCropUrl"],
+            json!("/api/reader/images/current/meter-crop.png")
+        );
+        assert_eq!(gallery_json["originalImages"]["pageSize"], json!(7));
+        assert_eq!(gallery_json["originalImages"]["dayGroups"][0]["day"], json!("2026-03-16"));
+        assert_eq!(
+            gallery_json["originalImages"]["dayGroups"][0]["items"][0]["capturedAt"],
+            json!("2026-03-16T10:20:50Z")
+        );
+        assert_eq!(gallery_json["processedImages"]["dayGroups"], json!([]));
     }
 }

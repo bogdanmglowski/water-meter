@@ -24,6 +24,7 @@ require_non_empty() {
 camera_index="${READER_CAMERA_INDEX:-0}"
 interval_seconds="${READER_INTERVAL_SECONDS:-5}"
 pictures_dir="${READER_PICTURES_DIR:-/data/pictures}"
+processed_pictures_dir="${READER_PROCESSED_PICTURES_DIR:-/data/processed}"
 persist_every="${READER_PERSIST_EVERY:-1}"
 crop_output="${READER_CROP_OUTPUT:-}"
 pg_source="${READER_PG_SOURCE:-reader-docker}"
@@ -39,6 +40,7 @@ set -- \
     --camera-index "$camera_index" \
     --interval "$interval_seconds" \
     --pictures-dir "$pictures_dir" \
+    --processed-pictures-dir "$processed_pictures_dir" \
     --persist-every "$persist_every"
 
 if [ -n "$x1$y1$x2$y2" ]; then

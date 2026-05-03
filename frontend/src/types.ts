@@ -62,3 +62,29 @@ export interface DashboardResponse {
   summary: DashboardSummary;
   latestReading: Reading | null;
 }
+
+export interface ReaderImageItem {
+  kind: string;
+  name: string;
+  url: string;
+  capturedAt: string;
+}
+
+export interface ReaderImageDayGroup {
+  day: string;
+  items: ReaderImageItem[];
+}
+
+export interface ReaderGallerySection {
+  page: number;
+  pageSize: number;
+  totalDays: number;
+  totalPages: number;
+  dayGroups: ReaderImageDayGroup[];
+}
+
+export interface ReaderGallery {
+  currentCropUrl: string | null;
+  originalImages: ReaderGallerySection;
+  processedImages: ReaderGallerySection;
+}

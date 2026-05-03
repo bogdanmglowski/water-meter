@@ -3,6 +3,9 @@ import type {
   AnomalyItem,
   Bucket,
   DashboardResponse,
+  ReaderGallery,
+  ReaderGallerySection,
+  ReaderImageItem,
   Reading,
   ReadingsPage,
   UsagePoint,
@@ -34,6 +37,13 @@ type RawDashboardResponse = Omit<DashboardResponse, "generatedAt" | "latestReadi
 };
 type RawReadingsPage = Omit<ReadingsPage, "items"> & {
   items: RawReading[];
+};
+type RawReaderImageItem = ReaderImageItem;
+type RawReaderGallerySection = ReaderGallerySection;
+type RawReaderGallery = Omit<ReaderGallery, "currentCropUrl" | "originalImages" | "processedImages"> & {
+  currentCropUrl: string | null;
+  originalImages: RawReaderGallerySection;
+  processedImages: RawReaderGallerySection;
 };
 
 interface RangeParams {
@@ -220,4 +230,32 @@ export function deleteReading(id: number) {
   return request<{ deleted: boolean; id: number }>(`/api/readings/${id}`, undefined, {
     method: "DELETE",
   });
+}
+
+export function getReaderGallery() {
+  return request<RawReaderGallery>("/api/reader/gallery", {
+    original_page: 1,
+    processed_page: 1,
+    page_size: 7,
+  }).then((gallery) => ({
+    currentCropUrl: gallery.currentCropUrl,
+    originalImages: gallery.originalImages,
+    processedImages: gallery.processedImages,
+  }));
+}
+
+export function getReaderGalleryPage(params: {
+  originalPage: number;
+  processedPage: number;
+  pageSize: number;
+}) {
+  return request<RawReaderGallery>("/api/reader/gallery", {
+    original_page: params.originalPage,
+    processed_page: params.processedPage,
+    page_size: params.pageSize,
+  }).then((gallery) => ({
+    currentCropUrl: gallery.currentCropUrl,
+    originalImages: gallery.originalImages,
+    processedImages: gallery.processedImages,
+  }));
 }

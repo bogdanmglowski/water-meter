@@ -317,6 +317,36 @@ def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
     np.testing.assert_array_equal(saved, crop_image(frame, crop_rect))
 
 
+def test_run_capture_cycle_archives_processed_crop_when_original_is_persisted(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    frame[4:16, 8:22] = (0, 0, 255)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 20, 50)
+    crop_rect = CropRect(8, 4, 22, 16)
+    crop_output = tmp_path / "meter-crop.png"
+    processed_dir = tmp_path / "processed"
+
+    image_path, _, _ = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        timestamp=timestamp,
+        crop_rect=crop_rect,
+        crop_output_path=crop_output,
+        processed_pictures_root=processed_dir,
+        ocr_func=lambda path: 123,
+    )
+
+    assert image_path is not None
+    archived_crop = processed_dir / "2026-03-16" / "2026-03-16_10-20-50.jpg"
+    assert archived_crop.exists()
+
+    saved = cv2.imread(str(archived_crop))
+    assert saved is not None
+    expected = crop_image(frame, crop_rect)
+    assert saved.shape == expected.shape
+    assert np.abs(saved.astype(np.int16) - expected.astype(np.int16)).max() <= 1
+
+
 def test_run_capture_cycle_passes_written_crop_to_ocr(tmp_path: Path) -> None:
     frame = np.zeros((20, 30, 3), dtype=np.uint8)
     frame[4:16, 8:22] = (0, 0, 255)
@@ -567,6 +597,7 @@ def test_main_uses_usb_camera_and_logs_value(
         crop_rect: CropRect | None = None,
         persist_image: bool = True,
         crop_output_path: Path | None = None,
+        processed_pictures_root: Path | None = None,
         postgres_writer: object | None = None,
         ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:
@@ -574,6 +605,7 @@ def test_main_uses_usb_camera_and_logs_value(
         capture_calls["crop_rect"] = crop_rect
         capture_calls["persist_image"] = persist_image
         capture_calls["crop_output_path"] = crop_output_path
+        capture_calls["processed_pictures_root"] = processed_pictures_root
         capture_calls["postgres_writer"] = postgres_writer
         capture_calls["ocr_append_digit"] = ocr_append_digit
         return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", 12345, datetime(2026, 3, 30, 18, 0, 0)
@@ -608,6 +640,7 @@ def test_main_uses_usb_camera_and_logs_value(
     assert capture_calls["camera_index"] == 2
     assert capture_calls["crop_rect"] == CropRect(1, 2, 8, 9)
     assert capture_calls["crop_output_path"] == Path("meter-crop.png")
+    assert capture_calls["processed_pictures_root"] == Path("processed")
     assert capture_calls["postgres_writer"] is None
     assert capture_calls["ocr_append_digit"] is None
     assert capture_calls["persist_image"] is True
@@ -637,6 +670,7 @@ def test_main_persists_first_then_every_nth_capture(
         crop_rect: CropRect | None = None,
         persist_image: bool = True,
         crop_output_path: Path | None = None,
+        processed_pictures_root: Path | None = None,
         postgres_writer: object | None = None,
         ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:
@@ -718,6 +752,7 @@ def test_main_initializes_postgres_writer_when_enabled(
         crop_rect: CropRect | None = None,
         persist_image: bool = True,
         crop_output_path: Path | None = None,
+        processed_pictures_root: Path | None = None,
         postgres_writer: object | None = None,
         ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:

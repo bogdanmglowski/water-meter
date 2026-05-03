@@ -3,12 +3,16 @@ mod config;
 mod db;
 mod error;
 mod models;
+mod reader_files;
 
 use axum::extract::{Path, Query, State};
+use axum::http::header;
 use axum::http::{HeaderValue, Method};
+use axum::response::IntoResponse;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
 use sqlx::PgPool;
+use std::path::PathBuf;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -20,13 +24,15 @@ use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AlertDto, AnomalyDto, ConsumptionQuery, DashboardQuery, DashboardResponse,
-    DeleteReadingResponse, HealthResponse, RangeQuery, ReadingDto, ReadingsPageDto,
-    ReadingsQuery, UsagePoint,
+    DeleteReadingResponse, HealthResponse, RangeQuery, ReaderGalleryQuery,
+    ReaderGalleryResponse, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
 };
+use crate::reader_files::{build_gallery, resolve_image_path};
 
 #[derive(Clone)]
 struct AppState {
     pool: PgPool,
+    reader_runtime_dir: PathBuf,
 }
 
 #[derive(OpenApi)]
@@ -40,6 +46,8 @@ struct AppState {
         cumulative_series,
         consumption_series,
         alerts,
+        reader_gallery,
+        reader_image,
         openapi
     ),
     components(
@@ -52,6 +60,8 @@ struct AppState {
             UsagePoint,
             AlertDto,
             DashboardResponse,
+            ReaderGalleryResponse,
+            crate::models::ReaderImageItem,
             crate::models::DashboardSummary,
             crate::models::AlertSeverity
         )
@@ -77,7 +87,10 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(&pool).await?;
     let allowed_origin = HeaderValue::from_str(&config.client_origin)?;
 
-    let state = AppState { pool };
+    let state = AppState {
+        pool,
+        reader_runtime_dir: config.reader_runtime_dir,
+    };
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/dashboard", get(dashboard))
@@ -87,6 +100,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/series/cumulative", get(cumulative_series))
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
+        .route("/api/reader/gallery", get(reader_gallery))
+        .route("/api/reader/images/{category}/{*path}", get(reader_image))
         .route("/api/openapi.json", get(openapi))
         .with_state(state)
         .layer(
@@ -269,6 +284,49 @@ async fn alerts(
 
 #[utoipa::path(
     get,
+    path = "/api/reader/gallery",
+    responses((status = 200, description = "Reader image gallery", body = ReaderGalleryResponse))
+)]
+async fn reader_gallery(
+    State(state): State<AppState>,
+    Query(query): Query<ReaderGalleryQuery>,
+) -> AppResult<Json<ReaderGalleryResponse>> {
+    let page_size = query.page_size.unwrap_or(7).clamp(1, 31);
+    Ok(Json(build_gallery(
+        &state.reader_runtime_dir,
+        query.original_page.unwrap_or(1),
+        query.processed_page.unwrap_or(1),
+        page_size,
+    )?))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/reader/images/{category}/{path}",
+    params(
+        ("category" = String, Path, description = "Image category: current, original, or processed"),
+        ("path" = String, Path, description = "Relative image path")
+    ),
+    responses(
+        (status = 200, description = "Reader image file"),
+        (status = 404, description = "Reader image not found")
+    )
+)]
+async fn reader_image(
+    State(state): State<AppState>,
+    Path((category, path)): Path<(String, String)>,
+) -> AppResult<impl IntoResponse> {
+    let image_path = resolve_image_path(&state.reader_runtime_dir, &category, &path)?;
+    let bytes = tokio::fs::read(&image_path)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    let mime = mime_for_path(&image_path);
+
+    Ok(([(header::CONTENT_TYPE, mime)], bytes))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/openapi.json",
     responses((status = 200, description = "OpenAPI document"))
 )]
@@ -308,6 +366,15 @@ fn validate_range(from: Option<OffsetDateTime>, to: Option<OffsetDateTime>) -> A
 
 fn normalize_tz_offset(value: Option<i32>) -> i32 {
     value.unwrap_or(0).clamp(-720, 840)
+}
+
+fn mime_for_path(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn shutdown_signal() {

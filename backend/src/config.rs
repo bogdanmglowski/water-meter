@@ -1,11 +1,13 @@
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
     pub bind_addr: SocketAddr,
     pub client_origin: String,
+    pub reader_runtime_dir: PathBuf,
 }
 
 impl Config {
@@ -22,10 +24,14 @@ impl Config {
             .unwrap_or(8080);
         let client_origin =
             env::var("CLIENT_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".to_owned());
+        let reader_runtime_dir = env::var("READER_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("../reader/runtime"));
         Ok(Self {
             database_url,
             bind_addr: SocketAddr::new(host, port),
             client_origin,
+            reader_runtime_dir,
         })
     }
 }

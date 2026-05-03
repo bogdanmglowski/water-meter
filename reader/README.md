@@ -3,7 +3,7 @@
 Minimal Python app that:
 1. Captures an image from a USB camera on a timer.
 2. Saves the original frame to `pictures/YYYY-MM-DD/`.
-3. Always writes the cropped rectangle to a fixed file.
+3. Always writes the cropped rectangle to a fixed file and archives processed crops when the original frame is persisted.
 4. Sends that crop to the Ollama API with model `glm-ocr`.
 5. Optionally inserts the recognized meter value into Water Meter's PostgreSQL table `meter_readings`.
 
@@ -67,6 +67,8 @@ Each cycle does this:
 3. Send the crop to `OLLAMA_BASE_URL/api/generate` with model `glm-ocr`.
 4. Extract the first numeric token from the response and keep digits only.
 
+When the original frame is persisted, the processed crop is also archived into `processed/YYYY-MM-DD/`.
+
 If `--ocr-append-digit` is set, that digit is appended before logging and PostgreSQL insert.
 
 ## PostgreSQL output
@@ -115,6 +117,7 @@ READER_CAMERA_INDEX=0
 READER_VIDEO_DEVICE=/dev/video0
 OLLAMA_BASE_URL=http://host.docker.internal:11434
 READER_INTERVAL_SECONDS=5
+READER_PROCESSED_PICTURES_DIR=/data/processed
 READER_PERSIST_EVERY=1
 READER_X1=159
 READER_Y1=331

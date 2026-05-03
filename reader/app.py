@@ -276,6 +276,12 @@ def build_capture_image_path(pictures_root: Path, timestamp: datetime) -> Path:
     return day_dir / f"{timestamp.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
 
 
+def build_processed_image_path(pictures_root: Path, timestamp: datetime) -> Path:
+    day_dir = pictures_root / timestamp.strftime("%Y-%m-%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    return day_dir / f"{timestamp.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
+
+
 def write_image(image_path: Path, image: cv2.typing.MatLike) -> None:
     ensure_runtime_dependencies()
     image_path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,6 +316,16 @@ def crop_image(image: cv2.typing.MatLike, crop_rect: CropRect | None) -> cv2.typ
 def write_crop_output(crop_output_path: Path, cropped: cv2.typing.MatLike) -> None:
     crop_output_path.parent.mkdir(parents=True, exist_ok=True)
     write_image(crop_output_path, cropped)
+
+
+def write_processed_image(
+    pictures_root: Path,
+    timestamp: datetime,
+    cropped: cv2.typing.MatLike,
+) -> Path:
+    image_path = build_processed_image_path(pictures_root, timestamp)
+    write_image(image_path, cropped)
+    return image_path
 
 
 def run_ollama_ocr(crop_output_path: Path) -> int:
@@ -378,6 +394,7 @@ def run_capture_cycle(
     crop_rect: CropRect | None = None,
     persist_image: bool = True,
     crop_output_path: Path | None = None,
+    processed_pictures_root: Path | None = None,
     postgres_writer: PostgresWriter | None = None,
     ocr_append_digit: int | None = None,
     ocr_func=run_ollama_ocr,
@@ -394,6 +411,8 @@ def run_capture_cycle(
 
     effective_crop_output_path = crop_output_path or Path("meter-crop.png")
     write_crop_output(effective_crop_output_path, cropped)
+    if persist_image and processed_pictures_root is not None:
+        write_processed_image(processed_pictures_root, ts, cropped)
 
     value = append_digit(ocr_func(effective_crop_output_path), ocr_append_digit)
     if postgres_writer is not None:
@@ -428,6 +447,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("pictures"),
         help="Root directory where original captured pictures are stored.",
+    )
+    parser.add_argument(
+        "--processed-pictures-dir",
+        type=Path,
+        default=Path("processed"),
+        help="Root directory where processed crop pictures are archived when the original capture is persisted.",
     )
     parser.add_argument(
         "--persist-every",
@@ -588,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
                     crop_rect=crop_rect,
                     persist_image=persist_image,
                     crop_output_path=crop_output_path,
+                    processed_pictures_root=args.processed_pictures_dir,
                     postgres_writer=postgres_writer,
                     **(
                         {"ocr_append_digit": args.ocr_append_digit}

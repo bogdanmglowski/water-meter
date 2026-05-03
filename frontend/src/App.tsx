@@ -9,6 +9,7 @@ import {
   getCumulative,
   getDashboard,
   getReadings,
+  getReaderGalleryPage,
 } from "./api";
 import { AnomaliesTable } from "./components/AnomaliesTable";
 import { AlertPanel } from "./components/AlertPanel";
@@ -16,7 +17,7 @@ import { ChartCard } from "./components/ChartCard";
 import { EChart, type WaterMeterChartOption } from "./components/EChart";
 import { MetricCard } from "./components/MetricCard";
 import { ReadingsTable } from "./components/ReadingsTable";
-import type { Bucket, RangePreset, Reading } from "./types";
+import type { Bucket, RangePreset, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem, Reading } from "./types";
 import {
   buildRange,
   formatBucketLabel,
@@ -44,38 +45,37 @@ type AppPage =
   | "interval-consumption"
   | "daily-baseline"
   | "raw-readings"
-  | "anomalies";
+  | "anomalies"
+  | "reader-gallery";
 
 const pages = [
   {
     value: "dashboard" as const,
     label: "Dashboard",
-    detail: "Current meter state and headline usage totals.",
   },
   {
     value: "cumulative-trend" as const,
     label: "Cumulative Trend",
-    detail: "Raw cumulative readings over the selected window.",
   },
   {
     value: "interval-consumption" as const,
     label: "Interval Consumption",
-    detail: "Bucketed usage highlights bursts and quiet periods.",
   },
   {
     value: "daily-baseline" as const,
     label: "Daily Baseline",
-    detail: "Daily totals against a rolling average for the selected window.",
   },
   {
     value: "raw-readings" as const,
     label: "Raw Readings",
-    detail: "Direct cumulative values from PostgreSQL.",
   },
   {
     value: "anomalies" as const,
     label: "Anomalies",
-    detail: "Skipped abnormal jumps captured during ingestion.",
+  },
+  {
+    value: "reader-gallery" as const,
+    label: "Reader Gallery",
   },
 ];
 
@@ -112,9 +112,67 @@ function pageFromHash(hash: string): AppPage {
       return "raw-readings";
     case "#anomalies":
       return "anomalies";
+    case "#reader-gallery":
+      return "reader-gallery";
     default:
       return "cumulative-trend";
   }
+}
+
+function renderReaderImageCard(image: ReaderImageItem) {
+  return (
+    <article key={image.url} className="image-card">
+      <a href={image.url} target="_blank" rel="noreferrer" className="image-card__media-link">
+        <img src={image.url} alt={image.name} className="image-card__image" loading="lazy" />
+      </a>
+      <div className="image-card__meta">
+        <strong>{image.name}</strong>
+        <span>{formatTimestamp(image.capturedAt)}</span>
+      </div>
+    </article>
+  );
+}
+
+function renderReaderDayGroup(dayGroup: ReaderImageDayGroup, defaultOpen = false) {
+  return (
+    <details key={dayGroup.day} className="image-day-group" open={defaultOpen}>
+      <summary className="image-day-group__summary">
+        <div>
+          <strong>{formatTimestamp(`${dayGroup.day}T00:00:00Z`)}</strong>
+          <span>{dayGroup.items.length} image{dayGroup.items.length === 1 ? "" : "s"}</span>
+        </div>
+        <span className="count-pill">{dayGroup.items.length}</span>
+      </summary>
+      <div className="image-grid image-grid--grouped">
+        {dayGroup.items.map((image) => renderReaderImageCard(image))}
+      </div>
+    </details>
+  );
+}
+
+function renderReaderSectionPagination(
+  section: ReaderGallerySection | undefined,
+  label: string,
+  onPreviousPage: () => void,
+  onNextPage: () => void,
+) {
+  if (!section || section.totalPages <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="image-gallery__pagination">
+      <button type="button" onClick={onPreviousPage} disabled={section.page <= 1}>
+        Previous {label} days
+      </button>
+      <span>
+        Page {section.page} of {section.totalPages}
+      </span>
+      <button type="button" onClick={onNextPage} disabled={section.page >= section.totalPages}>
+        Next {label} days
+      </button>
+    </div>
+  );
 }
 
 function chartAxisLine() {
@@ -160,6 +218,8 @@ export default function App() {
   const [isEditingRange, setIsEditingRange] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [readingsPage, setReadingsPage] = useState(1);
+  const [originalGalleryPage, setOriginalGalleryPage] = useState(1);
+  const [processedGalleryPage, setProcessedGalleryPage] = useState(1);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
@@ -266,7 +326,17 @@ export default function App() {
   const isConsumptionPage = page === "interval-consumption";
   const isBaselinePage = page === "daily-baseline";
   const isAnomaliesPage = page === "anomalies";
+  const isReaderGalleryPage = page === "reader-gallery";
   const isChartPage = isCumulativePage || isConsumptionPage || isBaselinePage;
+
+  useEffect(() => {
+    if (!isReaderGalleryPage) {
+      return;
+    }
+
+    setOriginalGalleryPage(1);
+    setProcessedGalleryPage(1);
+  }, [isReaderGalleryPage]);
   const activePresetLabel =
     presets.find((option) => option.value === preset)?.label ?? "Selected range";
   const activeBucketLabel =
@@ -347,6 +417,19 @@ export default function App() {
     enabled: page === "raw-readings",
   });
 
+  const readerGalleryQuery = useQuery({
+    queryKey: ["reader-gallery", originalGalleryPage, processedGalleryPage],
+    queryFn: () =>
+      getReaderGalleryPage({
+        originalPage: originalGalleryPage,
+        processedPage: processedGalleryPage,
+        pageSize: 7,
+      }),
+    staleTime: 30_000,
+    refetchInterval: isReaderGalleryPage ? 30_000 : false,
+    enabled: isReaderGalleryPage,
+  });
+
   const deleteReadingMutation = useMutation({
     mutationFn: (id: number) => deleteReading(id),
     onSuccess: async () => {
@@ -383,9 +466,11 @@ export default function App() {
           ? consumptionQuery.error
           : isBaselinePage
             ? baselineQuery.error
-            : page === "raw-readings"
-              ? readingsQuery.error
-              : anomaliesQuery.error;
+              : page === "raw-readings"
+                ? readingsQuery.error
+                : isReaderGalleryPage
+                  ? readerGalleryQuery.error
+                  : anomaliesQuery.error;
 
   const dailySeries = baselineQuery.data ?? [];
   const dailyBaseline = rollingAverage(dailySeries, 7);
@@ -394,6 +479,7 @@ export default function App() {
   const totalReadingPages = rawReadingsPage?.totalPages ?? 1;
   const activeReadingsPage = rawReadingsPage?.page ?? readingsPage;
   const totalReadings = rawReadingsPage?.totalCount ?? 0;
+  const readerGallery = readerGalleryQuery.data;
   const cumulativeValues = (cumulativeQuery.data ?? []).map((point) => point.meterValueM3);
   const cumulativeMin = cumulativeValues.length > 0 ? Math.min(...cumulativeValues) : undefined;
   const cumulativeMax = cumulativeValues.length > 0 ? Math.max(...cumulativeValues) : undefined;
@@ -632,7 +718,7 @@ export default function App() {
             </div>
 
             <nav className="page-nav" aria-label="Subpages">
-              {pages.map((item, index) => (
+              {pages.map((item) => (
                 <a
                   key={item.value}
                   href={`#${item.value}`}
@@ -640,7 +726,6 @@ export default function App() {
                   aria-current={item.value === page ? "page" : undefined}
                   onClick={() => setPage(item.value)}
                 >
-                  <span className="page-nav__index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="page-nav__label">{item.label}</span>
                 </a>
               ))}
@@ -850,6 +935,130 @@ export default function App() {
             </section>
 
             <AnomaliesTable anomalies={anomaliesQuery.data ?? []} />
+          </>
+        ) : isReaderGalleryPage ? (
+          <>
+            <section className="card page-intro">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Reader Images</span>
+                  <h2>Inspect live crop and archived captures</h2>
+                  <p>
+                    View the latest crop used by OCR, plus the original saved frames and their
+                    processed crop counterparts.
+                  </p>
+                </div>
+                <span className="count-pill">
+                  {(readerGallery?.originalImages.totalDays ?? 0) +
+                    (readerGallery?.processedImages.totalDays ?? 0)}
+                </span>
+              </div>
+
+              <p className="range-meta">
+                The current crop refreshes from the reader runtime directory. Archived images are
+                grouped by day, newest first.
+              </p>
+            </section>
+
+            <section className="grid-two">
+              <section className="card image-feature-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">Current Crop</span>
+                    <h2>Latest OCR input</h2>
+                    <p>The file currently written to `meter-crop.png`.</p>
+                  </div>
+                </div>
+
+                {readerGallery?.currentCropUrl ? (
+                  <a
+                    href={readerGallery.currentCropUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="image-feature"
+                  >
+                    <img
+                      src={readerGallery.currentCropUrl}
+                      alt="Current OCR crop"
+                      className="image-feature__image"
+                    />
+                  </a>
+                ) : (
+                  <div className="empty-state">
+                    <strong>No current crop available.</strong>
+                    <p>Run the reader once to generate `meter-crop.png`.</p>
+                  </div>
+                )}
+              </section>
+
+              <section className="card image-gallery-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">Original Captures</span>
+                    <h2>Saved reader photos</h2>
+                    <p>Full frames archived by the reader before OCR, grouped by capture day.</p>
+                  </div>
+                  <span className="count-pill">{readerGallery?.originalImages.totalDays ?? 0}</span>
+                </div>
+
+                {renderReaderSectionPagination(
+                  readerGallery?.originalImages,
+                  "original",
+                  () => setOriginalGalleryPage((current) => Math.max(1, current - 1)),
+                  () =>
+                    setOriginalGalleryPage((current) =>
+                      Math.min(readerGallery?.originalImages.totalPages ?? current, current + 1),
+                    ),
+                )}
+
+                {readerGallery && readerGallery.originalImages.dayGroups.length > 0 ? (
+                  <div className="image-day-group-list">
+                    {readerGallery.originalImages.dayGroups.map((dayGroup, index) =>
+                      renderReaderDayGroup(dayGroup, index === 0),
+                    )}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <strong>No original captures yet.</strong>
+                    <p>Persisted reader frames will appear here.</p>
+                  </div>
+                )}
+              </section>
+            </section>
+
+            <section className="card image-gallery-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Processed Crops</span>
+                  <h2>Archived OCR crops</h2>
+                  <p>Processed crop snapshots stored alongside persisted original captures.</p>
+                </div>
+                <span className="count-pill">{readerGallery?.processedImages.totalDays ?? 0}</span>
+              </div>
+
+              {renderReaderSectionPagination(
+                readerGallery?.processedImages,
+                "processed",
+                () => setProcessedGalleryPage((current) => Math.max(1, current - 1)),
+                () =>
+                  setProcessedGalleryPage((current) =>
+                    Math.min(readerGallery?.processedImages.totalPages ?? current, current + 1),
+                  ),
+              )}
+
+              {readerGallery && readerGallery.processedImages.dayGroups.length > 0 ? (
+                <div className="image-day-group-list">
+                  {readerGallery.processedImages.dayGroups.map((dayGroup, index) =>
+                    renderReaderDayGroup(dayGroup, index === 0),
+                  )}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <strong>No processed crops yet.</strong>
+                  <p>Processed crops are archived when the reader persists an original capture.</p>
+                </div>
+              )}
+            </section>
           </>
         ) : (
           <>
