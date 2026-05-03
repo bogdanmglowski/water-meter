@@ -245,6 +245,7 @@ Deployment behavior:
 - `/api` is proxied internally to the Rust backend
 - PostgreSQL remains private to the Docker network
 - the backend is no longer published directly on a host port
+- the default Docker network uses `WATER_METER_NETWORK`, with a fixed subnet from `WATER_METER_SUBNET`
 
 Reader profile notes:
 - `--reader` enables the compose profile that starts the USB reader container alongside `db`, `backend`, and `frontend`

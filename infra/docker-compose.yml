@@ -127,3 +127,10 @@ services:
 
 volumes:
   water-meter-pg:
+
+networks:
+  default:
+    name: ${WATER_METER_NETWORK:-water-meter_default}
+    ipam:
+      config:
+        - subnet: ${WATER_METER_SUBNET:-172.24.0.0/16}
