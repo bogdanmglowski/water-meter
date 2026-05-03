@@ -31,7 +31,8 @@ else:
     _PSYCOPG_IMPORT_ERROR = None
 
 
-NUMERIC_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)?")
+METER_UNIT_PATTERN = re.compile(r"m\s*(?:\^?\s*3|³)", re.IGNORECASE)
+NUMERIC_TOKEN_PATTERN = re.compile(r"\d(?:[\d\s.,]*\d)?")
 
 
 class AppHelpFormatter(
@@ -121,11 +122,19 @@ def normalize_ocr_text(text: str) -> str | None:
     if not text:
         return None
 
-    match = NUMERIC_TOKEN_PATTERN.search(text)
+    sanitized = METER_UNIT_PATTERN.sub(" ", text)
+    match = NUMERIC_TOKEN_PATTERN.search(sanitized)
     if not match:
         return None
 
-    return match.group(0).replace(",", ".")
+    digits = re.sub(r"\D", "", match.group(0))
+    return digits or None
+
+
+def append_digit(value: int, digit: int | None) -> int:
+    if digit is None:
+        return value
+    return value * 10 + digit
 
 
 def get_ollama_base_url() -> str:
@@ -339,7 +348,7 @@ def run_ollama_ocr(crop_output_path: Path) -> int:
     if normalized is None:
         raise RuntimeError("No numeric meter reading found in Ollama OCR output")
 
-    return int(float(normalized))
+    return int(normalized)
 
 
 def capture_and_save_image(
@@ -370,6 +379,7 @@ def run_capture_cycle(
     persist_image: bool = True,
     crop_output_path: Path | None = None,
     postgres_writer: PostgresWriter | None = None,
+    ocr_append_digit: int | None = None,
     ocr_func=run_ollama_ocr,
 ) -> tuple[Path | None, int, datetime]:
     ensure_runtime_dependencies()
@@ -385,7 +395,7 @@ def run_capture_cycle(
     effective_crop_output_path = crop_output_path or Path("meter-crop.png")
     write_crop_output(effective_crop_output_path, cropped)
 
-    value = ocr_func(effective_crop_output_path)
+    value = append_digit(ocr_func(effective_crop_output_path), ocr_append_digit)
     if postgres_writer is not None:
         postgres_writer.persist(ts, value)
 
@@ -433,6 +443,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("meter-crop.png"),
         help="Fixed file path where the current cropped rectangle is written on each capture cycle.",
+    )
+    parser.add_argument(
+        "--ocr-append-digit",
+        type=int,
+        choices=range(10),
+        default=None,
+        help="Append one trailing digit to the OCR reading before logging and storing it. Leave unset to keep the OCR value unchanged.",
     )
 
     parser.add_argument("--x1", type=int, help="Left X coordinate of the crop rectangle.")
@@ -572,6 +589,11 @@ def main(argv: list[str] | None = None) -> int:
                     persist_image=persist_image,
                     crop_output_path=crop_output_path,
                     postgres_writer=postgres_writer,
+                    **(
+                        {"ocr_append_digit": args.ocr_append_digit}
+                        if args.ocr_append_digit is not None
+                        else {}
+                    ),
                 )
                 capture_count += 1
                 stamp = ts.strftime("%Y-%m-%d %H:%M:%S")

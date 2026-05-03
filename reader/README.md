@@ -7,6 +7,11 @@ Minimal Python app that:
 4. Sends that crop to the Ollama API with model `glm-ocr`.
 5. Optionally inserts the recognized meter value into Water Meter's PostgreSQL table `meter_readings`.
 
+Register format:
+- the OCR result is treated as register digits, not a decimal number
+- the last three digits represent liters
+- use `--ocr-append-digit 0` when the physical meter omits the final liter digit
+
 Removed on purpose:
 - IP camera URLs
 - CSV output
@@ -60,9 +65,9 @@ Each cycle does this:
 1. Capture original frame.
 2. Save crop to `--crop-output`.
 3. Send the crop to `OLLAMA_BASE_URL/api/generate` with model `glm-ocr`.
-4. Extract the first numeric token from the response.
+4. Extract the first numeric token from the response and keep digits only.
 
-The parsed value is truncated to an integer before PostgreSQL insert.
+If `--ocr-append-digit` is set, that digit is appended before logging and PostgreSQL insert.
 
 ## PostgreSQL output
 
@@ -74,12 +79,13 @@ Supported arguments:
 - `--pg-database-url`: PostgreSQL connection string. If omitted, the app falls back to `DATABASE_URL`.
 - `--pg-source`: value written into the `source` column. Default: `reader`.
 - `--pg-anomaly-threshold`: skip inserts when the reading jumps above the previous accepted value by more than this amount. Default: `100`.
+- `--ocr-append-digit`: append one trailing digit to the OCR result before logging and storing it.
 
 Notes:
 
 - Inserts use `ON CONFLICT (recorded_at) DO UPDATE`.
 - OCR uses the crop file written to `--crop-output`.
-- The parsed meter value is stored as `int(float(value))`.
+- Stored values keep the full register precision, with the last three digits representing liters.
 - Default `OLLAMA_BASE_URL` is `http://127.0.0.1:11434` for host runs.
 
 ## Persist Every Nth Capture
@@ -118,6 +124,7 @@ READER_CROP_OUTPUT=/data/meter-crop.png
 READER_PG_WRITE=true
 READER_PG_SOURCE=reader-docker
 READER_PG_ANOMALY_THRESHOLD=100
+READER_OCR_APPEND_DIGIT=0
 ```
 
 Docker note:

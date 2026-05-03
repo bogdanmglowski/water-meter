@@ -28,6 +28,7 @@ persist_every="${READER_PERSIST_EVERY:-1}"
 crop_output="${READER_CROP_OUTPUT:-}"
 pg_source="${READER_PG_SOURCE:-reader-docker}"
 pg_anomaly_threshold="${READER_PG_ANOMALY_THRESHOLD:-100}"
+ocr_append_digit="${READER_OCR_APPEND_DIGIT:-}"
 x1="${READER_X1:-}"
 y1="${READER_Y1:-}"
 x2="${READER_X2:-}"
@@ -54,6 +55,10 @@ fi
 
 if is_true "${READER_PG_WRITE:-true}"; then
     set -- "$@" --pg-write --pg-source "$pg_source" --pg-anomaly-threshold "$pg_anomaly_threshold"
+fi
+
+if [ -n "$ocr_append_digit" ]; then
+    set -- "$@" --ocr-append-digit "$ocr_append_digit"
 fi
 
 echo "Starting reader container (source=usb camera_index=${camera_index} interval=${interval_seconds}s pg_write=${READER_PG_WRITE:-true})"

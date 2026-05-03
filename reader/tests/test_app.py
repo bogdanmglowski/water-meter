@@ -136,7 +136,8 @@ def test_postgres_writer_skips_large_positive_jump_and_records_anomaly() -> None
 
 def test_normalize_ocr_text() -> None:
     assert normalize_ocr_text("12345") == "12345"
-    assert normalize_ocr_text("current reading: 12,34 m3") == "12.34"
+    assert normalize_ocr_text("current reading: 12,34 m3") == "1234"
+    assert normalize_ocr_text("Meter value: 891.12") == "89112"
     assert normalize_ocr_text("abc") is None
 
 
@@ -161,7 +162,7 @@ def test_run_ollama_ocr_extracts_first_numeric_value(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
 
-    assert run_ollama_ocr(crop_path) == 12345
+    assert run_ollama_ocr(crop_path) == 1234567
 
 
 def test_run_ollama_ocr_reports_missing_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -266,6 +267,32 @@ def test_run_capture_cycle_persists_to_postgres_writer(tmp_path: Path) -> None:
     assert value == 54321
     assert ts == timestamp
     assert calls == [(timestamp, 54321)]
+
+
+def test_run_capture_cycle_appends_configured_digit_before_persistence(tmp_path: Path) -> None:
+    frame = np.zeros((20, 30, 3), dtype=np.uint8)
+    camera = FakeCamera(frame)
+    timestamp = datetime(2026, 3, 16, 10, 20, 45)
+    calls: list[tuple[datetime, int]] = []
+
+    class FakePostgresWriter:
+        def persist(self, ts: datetime, value: int) -> None:
+            calls.append((ts, value))
+
+    _, value, ts = run_capture_cycle(
+        camera,
+        tmp_path / "pictures",
+        timestamp=timestamp,
+        crop_rect=CropRect(1, 1, 10, 10),
+        crop_output_path=tmp_path / "meter-crop.png",
+        postgres_writer=FakePostgresWriter(),
+        ocr_func=lambda path: 89112,
+        ocr_append_digit=0,
+    )
+
+    assert value == 891120
+    assert ts == timestamp
+    assert calls == [(timestamp, 891120)]
 
 
 def test_run_capture_cycle_writes_fixed_crop_output(tmp_path: Path) -> None:
@@ -433,6 +460,14 @@ def test_parse_postgres_target_uses_explicit_anomaly_threshold() -> None:
     )
 
 
+def test_parser_accepts_ocr_append_digit() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(["--ocr-append-digit", "0"])
+
+    assert args.ocr_append_digit == 0
+
+
 def test_parse_postgres_target_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
     parser = build_arg_parser()
     args = parser.parse_args(["--pg-write"])
@@ -495,6 +530,7 @@ def test_help_text_matches_usb_only_contract() -> None:
     help_text = build_arg_parser().format_help()
 
     assert "--camera-index CAMERA_INDEX" in help_text
+    assert "--ocr-append-digit {0,1,2,3,4,5,6,7,8,9}" in help_text
     assert "--persist-every PERSIST_EVERY" in help_text
     assert "--crop-output CROP_OUTPUT" in help_text
     assert "--pg-write" in help_text
@@ -532,12 +568,14 @@ def test_main_uses_usb_camera_and_logs_value(
         persist_image: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
+        ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:
         capture_calls["camera"] = camera
         capture_calls["crop_rect"] = crop_rect
         capture_calls["persist_image"] = persist_image
         capture_calls["crop_output_path"] = crop_output_path
         capture_calls["postgres_writer"] = postgres_writer
+        capture_calls["ocr_append_digit"] = ocr_append_digit
         return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", 12345, datetime(2026, 3, 30, 18, 0, 0)
 
     def stop_after_first_sleep(_seconds: float) -> None:
@@ -571,6 +609,7 @@ def test_main_uses_usb_camera_and_logs_value(
     assert capture_calls["crop_rect"] == CropRect(1, 2, 8, 9)
     assert capture_calls["crop_output_path"] == Path("meter-crop.png")
     assert capture_calls["postgres_writer"] is None
+    assert capture_calls["ocr_append_digit"] is None
     assert capture_calls["persist_image"] is True
     assert capture_calls["released"] is True
 
@@ -599,6 +638,7 @@ def test_main_persists_first_then_every_nth_capture(
         persist_image: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
+        ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:
         persist_calls.append(persist_image)
         call_number = len(persist_calls)
@@ -679,6 +719,7 @@ def test_main_initializes_postgres_writer_when_enabled(
         persist_image: bool = True,
         crop_output_path: Path | None = None,
         postgres_writer: object | None = None,
+        ocr_append_digit: int | None = None,
     ) -> tuple[Path | None, int, datetime]:
         persisted_writers.append(postgres_writer)
         return pictures_root / "capture.jpg", 33333, datetime(2026, 3, 30, 18, 0, 0)

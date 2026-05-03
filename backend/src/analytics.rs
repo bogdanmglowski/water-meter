@@ -7,6 +7,8 @@ use crate::models::{
     DbReading, ReadingDto, ReadingsPageDto, UsagePoint,
 };
 
+const LITERS_PER_CUBIC_METER: i64 = 1_000;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Bucket {
     Hour,
@@ -208,13 +210,27 @@ pub fn build_alerts(
     let hourly_from = from.max(now - Duration::days(4));
     let hourly =
         build_consumption_series(readings, Bucket::Hour, tz_offset_minutes, hourly_from, now);
-    if let Some(alert) = spike_alert("hourly_spike", "Hourly usage", &hourly, 24, 2.5, 1) {
+    if let Some(alert) = spike_alert(
+        "hourly_spike",
+        "Hourly usage",
+        &hourly,
+        24,
+        2.5,
+        LITERS_PER_CUBIC_METER,
+    ) {
         alerts.push(alert);
     }
 
     let daily_from = from.max(now - Duration::days(35));
     let daily = build_consumption_series(readings, Bucket::Day, tz_offset_minutes, daily_from, now);
-    if let Some(alert) = spike_alert("daily_spike", "Daily usage", &daily, 7, 1.8, 1) {
+    if let Some(alert) = spike_alert(
+        "daily_spike",
+        "Daily usage",
+        &daily,
+        7,
+        1.8,
+        LITERS_PER_CUBIC_METER,
+    ) {
         alerts.push(alert);
     }
 
@@ -350,8 +366,10 @@ fn overnight_leak_alert(
 
     let average =
         recent_nights.iter().map(|(_, total)| *total as f64).sum::<f64>() / recent_nights.len() as f64;
-    let all_nonzero = recent_nights.iter().all(|(_, total)| *total >= 1);
-    if !all_nonzero || average < 1.0 {
+    let all_nonzero = recent_nights
+        .iter()
+        .all(|(_, total)| *total >= LITERS_PER_CUBIC_METER);
+    if !all_nonzero || average < LITERS_PER_CUBIC_METER as f64 {
         return None;
     }
 
@@ -372,8 +390,8 @@ fn overnight_leak_alert(
             "Repeated overnight flow suggests a possible leak or a fixture that never fully closes."
                 .to_owned(),
         actual_value_m3: round_to_i64(average),
-        baseline_value_m3: Some(1),
-        ratio: Some(round_to_i64(average)),
+        baseline_value_m3: Some(LITERS_PER_CUBIC_METER),
+        ratio: Some(round_to_i64(average / LITERS_PER_CUBIC_METER as f64)),
         starts_at,
         ends_at,
     })
@@ -570,18 +588,18 @@ mod tests {
     #[test]
     fn dashboard_summary_uses_positive_deltas_only() {
         let readings = vec![
-            reading(datetime!(2026-04-01 00:00 UTC), 10),
-            reading(datetime!(2026-04-01 06:00 UTC), 12),
-            reading(datetime!(2026-04-01 12:00 UTC), 11),
-            reading(datetime!(2026-04-01 18:00 UTC), 15),
-            reading(datetime!(2026-04-02 01:00 UTC), 18),
+            reading(datetime!(2026-04-01 00:00 UTC), 10_000),
+            reading(datetime!(2026-04-01 06:00 UTC), 12_000),
+            reading(datetime!(2026-04-01 12:00 UTC), 11_000),
+            reading(datetime!(2026-04-01 18:00 UTC), 15_000),
+            reading(datetime!(2026-04-02 01:00 UTC), 18_000),
         ];
 
         let summary = build_dashboard(&readings, datetime!(2026-04-02 03:00 UTC), 0, 2, 0).summary;
 
-        assert_eq!(summary.today_m3, 3);
-        assert_eq!(summary.last_24h_m3, 9);
-        assert_eq!(summary.month_to_date_m3, 9);
+        assert_eq!(summary.today_m3, 3_000);
+        assert_eq!(summary.last_24h_m3, 9_000);
+        assert_eq!(summary.month_to_date_m3, 9_000);
         assert_eq!(summary.active_alerts, 2);
         assert_eq!(summary.anomaly_count, 1);
     }
@@ -589,10 +607,10 @@ mod tests {
     #[test]
     fn consumption_series_zero_fills_missing_buckets() {
         let readings = vec![
-            reading(datetime!(2026-04-10 00:00 UTC), 11),
-            reading(datetime!(2026-04-10 01:00 UTC), 12),
-            reading(datetime!(2026-04-10 02:00 UTC), 15),
-            reading(datetime!(2026-04-10 04:00 UTC), 17),
+            reading(datetime!(2026-04-10 00:00 UTC), 11_000),
+            reading(datetime!(2026-04-10 01:00 UTC), 12_000),
+            reading(datetime!(2026-04-10 02:00 UTC), 15_000),
+            reading(datetime!(2026-04-10 04:00 UTC), 17_000),
         ];
 
         let series = build_consumption_series(
@@ -604,16 +622,16 @@ mod tests {
         );
 
         let consumption: Vec<i64> = series.iter().map(|point| point.consumption_m3).collect();
-        assert_eq!(consumption, vec![0, 1, 3, 0, 2]);
+        assert_eq!(consumption, vec![0, 1_000, 3_000, 0, 2_000]);
     }
 
     #[test]
     fn alerts_include_negative_delta_reset_signal() {
         let readings = vec![
-            reading(datetime!(2026-04-12 00:00 UTC), 20),
-            reading(datetime!(2026-04-12 01:00 UTC), 22),
-            reading(datetime!(2026-04-12 02:00 UTC), 19),
-            reading(datetime!(2026-04-12 03:00 UTC), 21),
+            reading(datetime!(2026-04-12 00:00 UTC), 20_000),
+            reading(datetime!(2026-04-12 01:00 UTC), 22_000),
+            reading(datetime!(2026-04-12 02:00 UTC), 19_000),
+            reading(datetime!(2026-04-12 03:00 UTC), 21_000),
         ];
 
         let alerts = build_alerts(
@@ -625,5 +643,14 @@ mod tests {
         );
 
         assert!(alerts.iter().any(|alert| alert.kind == "negative_delta"));
+    }
+
+    #[test]
+    fn readings_keep_liter_precision_in_responses() {
+        let readings = vec![reading(datetime!(2026-04-01 00:00 UTC), 891_120)];
+
+        let response = build_readings(&readings);
+
+        assert_eq!(response[0].meter_value_m3, 891_120);
     }
 }

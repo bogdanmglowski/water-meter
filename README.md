@@ -251,7 +251,8 @@ Reader profile notes:
 - reader settings come from `.env.production`, using the `READER_*` variables shown in `.env.production.example`
 - set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
 - the reader is USB-only, always saves original frames, always writes a crop file, and reads the meter value through the Ollama HTTP API with model `glm-ocr`
-- when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL
+- when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL with the last three digits treated as liters
+- `READER_OCR_APPEND_DIGIT` appends one trailing digit before insert, useful when the physical meter omits the final liter digit
 - `READER_PG_ANOMALY_THRESHOLD` skips unusually large positive jumps and stores them in `meter_reading_anomalies` instead of `meter_readings`
 - crop coordinates are required
 - the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`

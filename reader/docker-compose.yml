@@ -20,6 +20,8 @@ services:
       READER_Y2: ${READER_Y2:-414}
       READER_PG_WRITE: ${READER_PG_WRITE:-true}
       READER_PG_SOURCE: ${READER_PG_SOURCE:-reader-standalone}
+      READER_PG_ANOMALY_THRESHOLD: ${READER_PG_ANOMALY_THRESHOLD:-100}
+      READER_OCR_APPEND_DIGIT: ${READER_OCR_APPEND_DIGIT:-}
     command: ["/app/docker-run.sh"]
     volumes:
       - ./runtime:/data

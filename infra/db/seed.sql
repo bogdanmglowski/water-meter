@@ -43,7 +43,7 @@ readings AS (
 days AS (
     SELECT
         day_start,
-        (1 + floor(random() * 7))::bigint AS daily_usage
+        (1000 + floor(random() * 7000))::bigint AS daily_usage_liters
     FROM bounds
     CROSS JOIN generate_series(
         date_trunc('day', start_at),
@@ -54,7 +54,7 @@ days AS (
 ranked_readings AS (
     SELECT
         r.recorded_at,
-        d.daily_usage,
+        d.daily_usage_liters,
         row_number() OVER (
             PARTITION BY date_trunc('day', r.recorded_at)
             ORDER BY random()
@@ -66,8 +66,9 @@ ranked_readings AS (
 interval_usage AS (
     SELECT
         recorded_at,
-        CASE
-            WHEN usage_rank <= daily_usage THEN 1::bigint
+        (daily_usage_liters / 144)
+        + CASE
+            WHEN usage_rank <= daily_usage_liters % 144 THEN 1::bigint
             ELSE 0::bigint
         END AS delta_m3
     FROM ranked_readings
@@ -75,7 +76,7 @@ interval_usage AS (
 cumulative AS (
     SELECT
         recorded_at,
-        8459 + COALESCE(SUM(delta_m3) OVER (
+        8459000 + COALESCE(SUM(delta_m3) OVER (
             ORDER BY recorded_at
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
         ), 0) AS meter_value_m3

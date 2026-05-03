@@ -72,7 +72,22 @@ export function buildRange(preset: RangePreset, end = new Date()) {
 }
 
 export function formatVolume(value: number) {
-  return `${Math.round(value)} m³`;
+  const liters = Math.round(value);
+  const sign = liters < 0 ? "-" : "";
+  const absoluteLiters = Math.abs(liters);
+  const cubicMeters = Math.floor(absoluteLiters / 1_000);
+  const remainderLiters = String(absoluteLiters % 1_000).padStart(3, "0");
+  return `${sign}${cubicMeters}.${remainderLiters} m³`;
+}
+
+export function formatVolumeAxis(value: number) {
+  const liters = Math.round(value);
+  const sign = liters < 0 ? "-" : "";
+  const absoluteLiters = Math.abs(liters);
+  const cubicMeters = Math.floor(absoluteLiters / 1_000);
+  const remainderLiters = String(absoluteLiters % 1_000).padStart(3, "0");
+
+  return `${sign}${cubicMeters}.${remainderLiters}`;
 }
 
 function isValidDate(value: Date) {

@@ -23,6 +23,7 @@ import {
   formatDateTimeInput,
   formatTimestamp,
   formatVolume,
+  formatVolumeAxis,
   rollingAverage,
   toIsoTimestamp,
 } from "./utils";
@@ -128,6 +129,14 @@ function chartAxisLabel() {
   return {
     color: "#6b7280",
   };
+}
+
+function chartValueTooltip(value: unknown) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "n/a";
+  }
+
+  return formatVolume(value);
 }
 
 function rangeToInputs(range: AppliedRange): RangeInputs {
@@ -412,6 +421,7 @@ export default function App() {
       backgroundColor: "#14151a",
       borderColor: "#3a3a3f",
       textStyle: { color: "#e5e7eb" },
+      valueFormatter: chartValueTooltip,
     },
     grid: { left: 48, right: 20, top: 24, bottom: 40 },
     xAxis: {
@@ -431,7 +441,10 @@ export default function App() {
           ? cumulativeMax + cumulativePadding
           : undefined,
       nameTextStyle: chartAxisLabel(),
-      axisLabel: chartAxisLabel(),
+      axisLabel: {
+        ...chartAxisLabel(),
+        formatter: (value: number) => formatVolumeAxis(value),
+      },
       splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
@@ -458,6 +471,7 @@ export default function App() {
       backgroundColor: "#14151a",
       borderColor: "#3a3a3f",
       textStyle: { color: "#e5e7eb" },
+      valueFormatter: chartValueTooltip,
     },
     grid: { left: 48, right: 20, top: 24, bottom: 56 },
     xAxis: {
@@ -472,7 +486,10 @@ export default function App() {
       type: "value",
       name: "m³",
       nameTextStyle: chartAxisLabel(),
-      axisLabel: chartAxisLabel(),
+      axisLabel: {
+        ...chartAxisLabel(),
+        formatter: (value: number) => formatVolumeAxis(value),
+      },
       splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
@@ -495,6 +512,7 @@ export default function App() {
       backgroundColor: "#14151a",
       borderColor: "#3a3a3f",
       textStyle: { color: "#e5e7eb" },
+      valueFormatter: chartValueTooltip,
     },
     legend: {
       top: 0,
@@ -513,7 +531,10 @@ export default function App() {
       type: "value",
       name: "m³",
       nameTextStyle: chartAxisLabel(),
-      axisLabel: chartAxisLabel(),
+      axisLabel: {
+        ...chartAxisLabel(),
+        formatter: (value: number) => formatVolumeAxis(value),
+      },
       splitLine: { lineStyle: { color: "rgba(58, 58, 63, 0.6)" } },
     },
     series: [
@@ -735,7 +756,7 @@ export default function App() {
                     </h2>
                     <p>
                       {isCumulativePage
-                        ? "Inspect the raw cumulative feed across any selected window."
+                        ? "Inspect the raw cumulative feed across any selected window, including liter precision in the last three digits."
                         : isConsumptionPage
                           ? "Move from short hourly views to broader monthly or yearly summaries."
                           : "This page groups the selected window into daily totals and overlays a rolling seven-day average."}
@@ -765,7 +786,7 @@ export default function App() {
 
                 <p className="range-meta">
                   {isCumulativePage
-                    ? `${activeRangeLabel} selected. Raw cumulative values span ${activeRangeSummary}.`
+                    ? `${activeRangeLabel} selected. Raw cumulative values span ${activeRangeSummary}, with the last three digits representing liters.`
                     : isConsumptionPage
                       ? `${activeRangeLabel} selected. Interval consumption is grouped as ${activeBucketLabel.toLowerCase()} buckets for ${activeRangeSummary}.`
                       : `${activeRangeLabel} selected. Daily totals span ${activeRangeSummary}, with a rolling seven-day average overlay.`}
@@ -811,11 +832,11 @@ export default function App() {
               <div className="section-head">
                 <div>
                   <span className="eyebrow">Skipped OCR Jumps</span>
-                  <h2>Inspect anomaly readings directly</h2>
-                  <p>
-                    These readings were not inserted into the main meter feed because they exceeded
-                    the configured positive jump threshold.
-                  </p>
+                    <h2>Inspect anomaly readings directly</h2>
+                    <p>
+                      These readings were not inserted into the main meter feed because they exceeded
+                     the configured positive jump threshold after the full liter-precision register was interpreted.
+                    </p>
                 </div>
                 <span className="count-pill">{anomaliesQuery.data?.length ?? 0}</span>
               </div>
@@ -839,7 +860,7 @@ export default function App() {
                   <h2>Inspect cumulative readings directly</h2>
                   <p>
                     Review the exact values stored in PostgreSQL for the same date/time windows used
-                    by the chart pages.
+                    by the chart pages. The last three digits represent liters.
                   </p>
                 </div>
                 <span className="count-pill">{totalReadings}</span>
