@@ -94,6 +94,16 @@ pub fn delete_image(
                 "reader image '{relative_path}' was not found"
             )));
         }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+            ) =>
+        {
+            return Err(AppError::Internal(format!(
+                "reader image directory is not writable: {error}"
+            )));
+        }
         Err(error) => return Err(AppError::Internal(error.to_string())),
     }
     remove_empty_parent_dirs(reader_runtime_dir, &path)?;
@@ -444,6 +454,37 @@ mod tests {
 
         assert!(!image_path.exists());
         assert!(!root.join("pictures/2026-03-16").exists());
+    }
+
+    #[test]
+    fn delete_image_reports_non_writable_directory() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let root = tempdir.path();
+        let day_dir = root.join("pictures/2026-03-16");
+        let image_path = day_dir.join("2026-03-16_10-20-50.jpg");
+        touch(&image_path);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let original_permissions = fs::metadata(&day_dir)
+                .expect("day dir metadata")
+                .permissions();
+
+            fs::set_permissions(&day_dir, fs::Permissions::from_mode(0o555))
+                .expect("set read-only permissions");
+
+            let error = delete_image(root, "original", "2026-03-16/2026-03-16_10-20-50.jpg")
+                .expect_err("delete should fail for non-writable directory");
+
+            assert_eq!(
+                error.to_string(),
+                "reader image directory is not writable: Permission denied (os error 13)"
+            );
+
+            fs::set_permissions(&day_dir, original_permissions).expect("restore permissions");
+        }
     }
 
     #[test]

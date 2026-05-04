@@ -39,6 +39,7 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+    user: "0:0"
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-water_meter}:${POSTGRES_PASSWORD:-water_meter}@db:5432/${POSTGRES_DB:-water_meter}
@@ -51,7 +52,7 @@ services:
       seed:
         condition: service_completed_successfully
     volumes:
-      - ../reader/runtime:/reader-runtime:ro
+      - ../reader/runtime:/reader-runtime
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
       interval: 10s
