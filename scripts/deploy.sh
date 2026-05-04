@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
-ENV_FILE="${ROOT_DIR}/.env.production"
+ENV_FILE="${ROOT_DIR}/.env"
 
 usage() {
   cat <<'EOF'
@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  printf 'Missing %s. Create it from .env.production.example first.\n' "$ENV_FILE" >&2
+  printf 'Missing %s. Create it from .env.example first.\n' "$ENV_FILE" >&2
   exit 1
 fi
 

@@ -140,13 +140,14 @@ cp .env.example .env
 - `POSTGRES_PASSWORD`: database password
 - `BACKUP_HOST_DIR`: absolute host directory where `./scripts/deploy.sh backup` writes dumps
 - `SEED_DEMO_DATA`: whether Docker startup should seed demo data into an empty database
-- `VITE_API_BASE_URL`: optional explicit frontend API base URL
+- `VITE_API_BASE_URL`: optional extra variable for manual frontend runs against a non-default API base
 
 Default local behavior:
 - Docker stack client: `http://localhost:5173`
 - Docker stack API via frontend proxy: `http://localhost:5173/api`
 - PostgreSQL stays on the internal Docker network in the ready-to-use stack
-- `VITE_API_BASE_URL` is only needed for manual frontend runs against a non-default API base
+- leave `VITE_API_BASE_URL` unset to keep Vite proxying `/api`
+- add `VITE_API_BASE_URL` only for manual frontend runs against a non-default API base
 
 ## Build And Run
 
@@ -198,13 +199,14 @@ Use this when the app should run continuously on another Linux machine in your n
 3. Create a deployment env file:
 
 ```bash
-cp .env.production.example .env.production
+cp .env.example .env
 ```
 
-4. Edit `.env.production`:
+4. Edit `.env`:
 
 - set `CLIENT_HOST` to the server LAN IP or DNS name
-- set `CLIENT_URL`, `API_URL`, and `CLIENT_ORIGIN` to the same host
+- set `CLIENT_PORT` to the published frontend port, usually `80`
+- set `CLIENT_ORIGIN` to the exact frontend origin, including the port when it is not `80`
 - set a real `POSTGRES_PASSWORD`
 - set `BACKUP_HOST_DIR` to the host directory that should receive database dumps
 - keep `SEED_DEMO_DATA=false` unless this host should start with demo data
@@ -251,7 +253,7 @@ Deployment behavior:
 
 Reader profile notes:
 - `--reader` enables the compose profile that starts the USB reader container alongside `db`, `backend`, and `frontend`
-- reader settings come from `.env.production`, using the `READER_*` variables shown in `.env.production.example`
+- reader settings come from `.env`, using the `READER_*` variables shown in `.env.example`
 - set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
 - the reader is USB-only, always saves original frames, always writes a crop file, and reads the meter value through the Ollama HTTP API with model `glm-ocr`
 - when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL with the last three digits treated as liters
@@ -301,6 +303,7 @@ npm run dev
 
 Manual frontend notes:
 - Vite proxies `/api` to `http://localhost:8080`
+- when running from `frontend/`, Vite reads `VITE_API_BASE_URL` from the root `.env`
 - if `VITE_API_BASE_URL` is set, the frontend uses that explicit base URL
 
 Manual reseed:

@@ -110,25 +110,10 @@ Main stack profile:
 ./scripts/deploy.sh up --reader
 ```
 
-Relevant `.env.production` settings:
+Relevant root `.env` settings:
 
-```dotenv
-READER_CAMERA_INDEX=0
-READER_VIDEO_DEVICE=/dev/video0
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-READER_INTERVAL_SECONDS=5
-READER_PROCESSED_PICTURES_DIR=/data/processed
-READER_PERSIST_EVERY=1
-READER_X1=159
-READER_Y1=331
-READER_X2=565
-READER_Y2=414
-READER_CROP_OUTPUT=/data/meter-crop.png
-READER_PG_WRITE=true
-READER_PG_SOURCE=reader-docker
-READER_PG_ANOMALY_THRESHOLD=100
-READER_OCR_APPEND_DIGIT=0
-```
+- use the `READER_*` and `OLLAMA_BASE_URL` entries from the root `.env.example`
+- adjust `READER_VIDEO_DEVICE` and crop coordinates for the target host and camera
 
 Docker note:
 
