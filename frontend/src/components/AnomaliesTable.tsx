@@ -22,7 +22,7 @@ export function AnomaliesTable({ anomalies }: AnomaliesTableProps) {
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="reading-table">
+          <table className="reading-table reading-table--anomalies">
             <thead>
               <tr>
                 <th>Recorded</th>

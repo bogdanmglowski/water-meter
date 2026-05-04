@@ -73,12 +73,12 @@ export function ReadingsTable({
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="reading-table">
+          <table className="reading-table reading-table--raw">
             <thead>
               <tr>
                 <th>Recorded</th>
                 <th>Meter Value</th>
-                <th>Source</th>
+                <th>Delta</th>
                 <th aria-label="Actions" />
               </tr>
             </thead>
@@ -87,7 +87,7 @@ export function ReadingsTable({
                 <tr key={reading.id}>
                   <td>{formatTimestamp(reading.recordedAt)}</td>
                   <td>{formatVolume(reading.meterValueM3)}</td>
-                  <td>{reading.source}</td>
+                  <td>{reading.deltaM3 === null ? "-" : formatVolume(reading.deltaM3)}</td>
                   <td className="reading-table__actions">
                     <button
                       type="button"

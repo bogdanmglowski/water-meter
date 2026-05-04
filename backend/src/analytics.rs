@@ -402,6 +402,7 @@ fn map_reading(reading: &DbReading) -> ReadingDto {
         id: reading.id,
         recorded_at: reading.recorded_at,
         meter_value_m3: reading.meter_value_m3,
+        delta_m3: reading.delta_m3,
         source: reading.source.clone(),
     }
 }
@@ -516,6 +517,21 @@ mod tests {
             id: recorded_at.unix_timestamp(),
             recorded_at,
             meter_value_m3,
+            delta_m3: None,
+            source: "test".to_owned(),
+        }
+    }
+
+    fn reading_with_delta(
+        recorded_at: OffsetDateTime,
+        meter_value_m3: i64,
+        delta_m3: Option<i64>,
+    ) -> DbReading {
+        DbReading {
+            id: recorded_at.unix_timestamp(),
+            recorded_at,
+            meter_value_m3,
+            delta_m3,
             source: "test".to_owned(),
         }
     }
@@ -583,6 +599,51 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![datetime!(2026-04-01 00:00 UTC).unix_timestamp()]
         );
+    }
+
+    #[test]
+    fn readings_page_includes_delta_from_previous_row() {
+        let readings = vec![
+            reading_with_delta(datetime!(2026-04-01 01:00 UTC), 10_350, Some(350)),
+            reading_with_delta(datetime!(2026-04-01 02:00 UTC), 11_000, Some(650)),
+        ];
+
+        let response = build_readings_page(
+            &readings,
+            ReadingsPage {
+                page: 1,
+                page_size: 2,
+                total_count: 3,
+                total_pages: 2,
+                offset: 1,
+                limit: 2,
+            },
+        );
+
+        assert_eq!(response.items.len(), 2);
+        assert_eq!(response.items[0].meter_value_m3, 11_000);
+        assert_eq!(response.items[0].delta_m3, Some(650));
+        assert_eq!(response.items[1].meter_value_m3, 10_350);
+        assert_eq!(response.items[1].delta_m3, Some(350));
+    }
+
+    #[test]
+    fn readings_page_leaves_oldest_row_without_delta() {
+        let response = build_readings_page(
+            &[reading_with_delta(datetime!(2026-04-01 00:00 UTC), 10_000, None)],
+            ReadingsPage {
+                page: 2,
+                page_size: 2,
+                total_count: 3,
+                total_pages: 2,
+                offset: 0,
+                limit: 1,
+            },
+        );
+
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].meter_value_m3, 10_000);
+        assert_eq!(response.items[0].delta_m3, None);
     }
 
     #[test]

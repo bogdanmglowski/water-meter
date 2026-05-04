@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -132,6 +132,174 @@ def test_postgres_writer_skips_large_positive_jump_and_records_anomaly() -> None
     params = queries[1][1]
     assert isinstance(params, tuple)
     assert params[1:] == (1205, datetime(2026, 3, 16, 10, 15, 0), 1000, 205, 100, "reader-test")
+
+
+def test_postgres_writer_compares_against_previous_anomaly_before_accepting_next_reading() -> None:
+    executed: dict[str, object] = {"queries": []}
+    database = {
+        "readings": [(datetime(2026, 3, 16, 9, 15, 0, tzinfo=timezone.utc), 1000)],
+        "anomalies": [],
+    }
+
+    class FakeCursor:
+        def __init__(self) -> None:
+            self._fetchone_result: tuple[datetime, int] | None = None
+
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed["queries"].append((query, params))
+            if params is None:
+                return
+
+            if "SELECT recorded_at, meter_value_m3" in query:
+                recorded_at = params[0]
+                rows = list(database["readings"])
+                if "meter_reading_anomalies" in query:
+                    rows.extend(database["anomalies"])
+                eligible = [row for row in rows if row[0] < recorded_at]
+                self._fetchone_result = max(eligible, key=lambda row: row[0]) if eligible else None
+                return
+
+            if "INSERT INTO meter_reading_anomalies" in query:
+                database["anomalies"].append((params[0], params[1]))
+                return
+
+            if "INSERT INTO meter_readings" in query:
+                database["readings"].append((params[0], params[1]))
+
+        def fetchone(self) -> tuple[datetime, int] | None:
+            return self._fetchone_result
+
+    class FakeConnection:
+        closed = False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    def fake_connect(database_url: str, autocommit: bool) -> FakeConnection:
+        executed["database_url"] = database_url
+        executed["autocommit"] = autocommit
+        return FakeConnection()
+
+    app._PSYCOPG_IMPORT_ERROR = None
+    app.psycopg = SimpleNamespace(connect=fake_connect)
+
+    writer = PostgresWriter(
+        PostgresTarget(
+            database_url="postgres://meter:meter@db:5432/water_meter",
+            source="reader-test",
+            anomaly_threshold=100,
+        )
+    )
+
+    writer.persist(datetime(2026, 3, 16, 10, 20, 0), 1205)
+    writer.persist(datetime(2026, 3, 16, 10, 25, 0), 1210)
+
+    queries = [item for item in executed["queries"] if item[1] is not None]
+    assert len(queries) == 4
+    assert "SELECT recorded_at, meter_value_m3" in str(queries[0][0])
+    assert "INSERT INTO meter_reading_anomalies" in str(queries[1][0])
+    assert "SELECT recorded_at, meter_value_m3" in str(queries[2][0])
+    assert "INSERT INTO meter_readings" in str(queries[3][0])
+    anomaly_params = queries[1][1]
+    insert_params = queries[3][1]
+    assert isinstance(anomaly_params, tuple)
+    assert isinstance(insert_params, tuple)
+    assert anomaly_params[1:] == (
+        1205,
+        datetime(2026, 3, 16, 9, 15, 0, tzinfo=timezone.utc),
+        1000,
+        205,
+        100,
+        "reader-test",
+    )
+    assert insert_params[1:] == (1210, "reader-test")
+
+
+def test_postgres_writer_prefers_accepted_reading_when_timestamp_matches_previous_anomaly() -> None:
+    executed: dict[str, object] = {"queries": []}
+    database = {
+        "readings": [(datetime(2026, 3, 16, 9, 20, 0, tzinfo=timezone.utc), 1206)],
+        "anomalies": [(datetime(2026, 3, 16, 9, 20, 0, tzinfo=timezone.utc), 1205)],
+    }
+
+    class FakeCursor:
+        def __init__(self) -> None:
+            self._fetchone_result: tuple[datetime, int] | None = None
+
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed["queries"].append((query, params))
+            if params is None:
+                return
+
+            if "SELECT recorded_at, meter_value_m3" in query:
+                recorded_at = params[0]
+                rows = [(ts, value, 1) for ts, value in database["readings"]]
+                if "meter_reading_anomalies" in query:
+                    rows.extend((ts, value, 0) for ts, value in database["anomalies"])
+                eligible = [row for row in rows if row[0] < recorded_at]
+                latest = max(eligible, key=lambda row: (row[0], row[2])) if eligible else None
+                self._fetchone_result = None if latest is None else (latest[0], latest[1])
+                return
+
+            if "INSERT INTO meter_reading_anomalies" in query:
+                database["anomalies"].append((params[0], params[1]))
+                return
+
+            if "INSERT INTO meter_readings" in query:
+                database["readings"].append((params[0], params[1]))
+
+        def fetchone(self) -> tuple[datetime, int] | None:
+            return self._fetchone_result
+
+    class FakeConnection:
+        closed = False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    def fake_connect(database_url: str, autocommit: bool) -> FakeConnection:
+        executed["database_url"] = database_url
+        executed["autocommit"] = autocommit
+        return FakeConnection()
+
+    app._PSYCOPG_IMPORT_ERROR = None
+    app.psycopg = SimpleNamespace(connect=fake_connect)
+
+    writer = PostgresWriter(
+        PostgresTarget(
+            database_url="postgres://meter:meter@db:5432/water_meter",
+            source="reader-test",
+            anomaly_threshold=10,
+        )
+    )
+
+    writer.persist(datetime(2026, 3, 16, 10, 25, 0), 1214)
+
+    queries = [item for item in executed["queries"] if item[1] is not None]
+    assert len(queries) == 2
+    assert "SELECT recorded_at, meter_value_m3" in str(queries[0][0])
+    assert "INSERT INTO meter_readings" in str(queries[1][0])
+    insert_params = queries[1][1]
+    assert isinstance(insert_params, tuple)
+    assert insert_params[1:] == (1214, "reader-test")
 
 
 def test_normalize_ocr_text() -> None:

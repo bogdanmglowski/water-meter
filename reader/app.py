@@ -182,12 +182,21 @@ class PostgresWriter:
         cursor.execute(
             """
             SELECT recorded_at, meter_value_m3
-            FROM meter_readings
-            WHERE recorded_at < %s
-            ORDER BY recorded_at DESC, id DESC
+            FROM (
+                SELECT recorded_at, meter_value_m3, 1 AS source_priority
+                FROM meter_readings
+                WHERE recorded_at < %s
+
+                UNION ALL
+
+                SELECT recorded_at, meter_value_m3, 0 AS source_priority
+                FROM meter_reading_anomalies
+                WHERE recorded_at < %s
+            ) AS previous_readings
+            ORDER BY recorded_at DESC, source_priority DESC
             LIMIT 1
             """,
-            (recorded_at,),
+            (recorded_at, recorded_at),
         )
         row = cursor.fetchone()
         if row is None:

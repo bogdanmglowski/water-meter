@@ -6,6 +6,7 @@ export interface Reading {
   id: number;
   recordedAt: string;
   meterValueM3: number;
+  deltaM3: number | null;
   source: string;
 }
 

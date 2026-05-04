@@ -930,7 +930,7 @@ export default function App() {
 
               <p className="range-meta">
                 Showing skipped anomaly rows for {activeRangeSummary}. Each row includes the
-                previous accepted reading and the jump amount that triggered the skip.
+                immediately previous reading and the jump amount that triggered the skip.
               </p>
             </section>
 
@@ -1078,8 +1078,8 @@ export default function App() {
               {rangeControls}
 
               <p className="range-meta">
-                Server pagination is active for {activeRangeSummary}. Values remain cumulative, not
-                per-bucket deltas.
+                Server pagination is active for {activeRangeSummary}. The delta column shows usage
+                between each row and the immediately previous reading.
               </p>
             </section>
 

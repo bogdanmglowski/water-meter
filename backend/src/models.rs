@@ -8,6 +8,7 @@ pub struct DbReading {
     pub id: i64,
     pub recorded_at: OffsetDateTime,
     pub meter_value_m3: i64,
+    pub delta_m3: Option<i64>,
     pub source: String,
 }
 
@@ -41,6 +42,7 @@ pub struct ReadingDto {
     #[schema(value_type = String, format = DateTime)]
     pub recorded_at: OffsetDateTime,
     pub meter_value_m3: i64,
+    pub delta_m3: Option<i64>,
     pub source: String,
 }
 
@@ -237,6 +239,7 @@ mod tests {
                 id: 7,
                 recorded_at: datetime!(2026-04-26 09:08:07 UTC),
                 meter_value_m3: 43,
+                delta_m3: Some(3),
                 source: "seed".to_owned(),
             }),
         };

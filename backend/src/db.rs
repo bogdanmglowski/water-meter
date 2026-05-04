@@ -26,13 +26,31 @@ pub async fn fetch_readings(
 ) -> Result<Vec<DbReading>, sqlx::Error> {
     sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT id, recorded_at, meter_value_m3, source
-        FROM meter_readings
-        WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
-          AND ($2::timestamptz IS NULL OR recorded_at <= $2)
-        ORDER BY recorded_at ASC, id ASC
-        OFFSET $3
-        LIMIT $4
+        WITH selected AS (
+            SELECT id, recorded_at, meter_value_m3, source
+            FROM meter_readings
+            WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
+              AND ($2::timestamptz IS NULL OR recorded_at <= $2)
+            ORDER BY recorded_at ASC, id ASC
+            OFFSET $3
+            LIMIT $4
+        )
+        SELECT
+            selected.id,
+            selected.recorded_at,
+            selected.meter_value_m3,
+            selected.meter_value_m3 - previous_row.meter_value_m3 AS delta_m3,
+            selected.source
+        FROM selected
+        LEFT JOIN LATERAL (
+            SELECT meter_value_m3
+            FROM meter_readings
+            WHERE recorded_at < selected.recorded_at
+               OR (recorded_at = selected.recorded_at AND id < selected.id)
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT 1
+        ) AS previous_row ON true
+        ORDER BY selected.recorded_at ASC, selected.id ASC
         "#,
     )
     .bind(from)
@@ -131,7 +149,7 @@ pub async fn fetch_window_readings(
 ) -> Result<Vec<DbReading>, sqlx::Error> {
     let previous = sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT id, recorded_at, meter_value_m3, source
+        SELECT id, recorded_at, meter_value_m3, NULL::bigint AS delta_m3, source
         FROM meter_readings
         WHERE recorded_at < $1
         ORDER BY recorded_at DESC, id DESC
@@ -145,7 +163,7 @@ pub async fn fetch_window_readings(
 
     let mut readings = sqlx::query_as::<_, DbReading>(
         r#"
-        SELECT id, recorded_at, meter_value_m3, source
+        SELECT id, recorded_at, meter_value_m3, NULL::bigint AS delta_m3, source
         FROM meter_readings
         WHERE recorded_at >= $1
           AND recorded_at <= $2

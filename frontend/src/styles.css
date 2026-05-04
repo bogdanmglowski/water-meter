@@ -989,8 +989,8 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .reading-table th:nth-child(3),
-  .reading-table td:nth-child(3) {
+  .reading-table--anomalies th:nth-child(3),
+  .reading-table--anomalies td:nth-child(3) {
     display: none;
   }
 

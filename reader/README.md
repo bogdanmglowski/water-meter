@@ -80,7 +80,7 @@ Supported arguments:
 - `--pg-write`: enables database inserts.
 - `--pg-database-url`: PostgreSQL connection string. If omitted, the app falls back to `DATABASE_URL`.
 - `--pg-source`: value written into the `source` column. Default: `reader`.
-- `--pg-anomaly-threshold`: skip inserts when the reading jumps above the previous accepted value by more than this amount. Default: `100`.
+- `--pg-anomaly-threshold`: skip inserts when the reading jumps above the immediately previous reading by more than this amount. Default: `100`.
 - `--ocr-append-digit`: append one trailing digit to the OCR result before logging and storing it.
 
 Notes:
