@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Water meter brand mark</title>
+  <desc id="desc">A glossy digital water meter with a cyan reservoir and pink droplet accent.</desc>
+  <defs>
+    <linearGradient id="bodyGrad" x1="104" y1="108" x2="376" y2="392" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31415f" />
+      <stop offset="0.3" stop-color="#0f172f" />
+      <stop offset="0.62" stop-color="#16223f" />
+      <stop offset="1" stop-color="#060814" />
+    </linearGradient>
+    <linearGradient id="rimGrad" x1="106" y1="96" x2="387" y2="143" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#81d9ff" />
+      <stop offset="0.16" stop-color="#24385b" />
+      <stop offset="0.48" stop-color="#050814" />
+      <stop offset="0.82" stop-color="#f6f4ff" />
+      <stop offset="1" stop-color="#ff6cc5" />
+    </linearGradient>
+    <linearGradient id="pipeGrad" x1="53" y1="228" x2="154" y2="271" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9fb0c9" />
+      <stop offset="0.16" stop-color="#475b7a" />
+      <stop offset="0.55" stop-color="#16233a" />
+      <stop offset="1" stop-color="#060b18" />
+    </linearGradient>
+    <linearGradient id="displayGrad" x1="152" y1="207" x2="334" y2="304" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#09081b" />
+      <stop offset="0.58" stop-color="#241133" />
+      <stop offset="1" stop-color="#5d183d" />
+    </linearGradient>
+    <linearGradient id="waterGrad" x1="170" y1="146" x2="300" y2="370" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d4fbff" />
+      <stop offset="0.22" stop-color="#73e8ff" />
+      <stop offset="0.55" stop-color="#2aa9da" />
+      <stop offset="1" stop-color="#0d5a84" />
+    </linearGradient>
+    <linearGradient id="dropGrad" x1="286" y1="180" x2="437" y2="435" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd1f0" />
+      <stop offset="0.2" stop-color="#ff7fd7" />
+      <stop offset="0.68" stop-color="#ec2aa4" />
+      <stop offset="1" stop-color="#af0c67" />
+    </linearGradient>
+    <linearGradient id="glossGrad" x1="167" y1="170" x2="250" y2="362" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.8" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+    <radialGradient id="pinkGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(336 146) rotate(90) scale(170 148)">
+      <stop offset="0" stop-color="#ff88d2" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#ff88d2" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="cyanGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(191 194) rotate(90) scale(186 176)">
+      <stop offset="0" stop-color="#67e8ff" stop-opacity="0.34" />
+      <stop offset="1" stop-color="#67e8ff" stop-opacity="0" />
+    </radialGradient>
+    <filter id="softBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="18" />
+    </filter>
+    <filter id="dropShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#05060e" flood-opacity="0.48" />
+    </filter>
+  </defs>
+
+  <ellipse cx="337" cy="156" rx="125" ry="95" fill="url(#pinkGlow)" filter="url(#softBlur)" />
+  <ellipse cx="185" cy="219" rx="146" ry="112" fill="url(#cyanGlow)" filter="url(#softBlur)" />
+
+  <g filter="url(#dropShadow)">
+    <g>
+      <rect x="124" y="122" width="244" height="250" rx="58" fill="url(#bodyGrad)" />
+      <rect x="108" y="123" width="32" height="242" rx="16" fill="rgba(92, 202, 255, 0.52)" />
+      <rect x="352" y="126" width="18" height="236" rx="9" fill="rgba(255, 171, 231, 0.3)" />
+
+      <ellipse cx="246" cy="121" rx="133" ry="56" fill="#091121" stroke="url(#rimGrad)" stroke-width="12" />
+      <ellipse cx="246" cy="123" rx="108" ry="39" fill="#10172a" stroke="rgba(240, 244, 255, 0.5)" stroke-width="4" />
+      <path d="M151 128c27-15 61-21 104-21 41 0 73 6 97 17-5 20-53 39-106 39-48 0-83-10-95-35Z" fill="url(#waterGrad)" />
+      <path d="M175 119c24-9 53-13 86-13 15 0 30 1 43 3 11 3 26 4 39 6 5 3 4 10-2 12-25 8-52 11-87 11-27 0-50-2-73-7-8-1-13-10-6-12Z" fill="rgba(255,255,255,0.44)" />
+
+      <rect x="54" y="215" width="116" height="70" rx="26" fill="url(#pipeGrad)" />
+      <ellipse cx="89" cy="250" rx="36" ry="43" fill="url(#pipeGrad)" />
+      <rect x="343" y="228" width="104" height="48" rx="21" fill="url(#pipeGrad)" />
+      <ellipse cx="424" cy="252" rx="24" ry="32" fill="url(#pipeGrad)" />
+
+      <rect x="148" y="210" width="193" height="92" rx="18" fill="#17142d" stroke="rgba(255, 124, 210, 0.36)" stroke-width="4" />
+      <rect x="156" y="218" width="177" height="76" rx="14" fill="url(#displayGrad)" />
+      <text x="168" y="276" fill="#ff7ecf" font-family="'Segoe UI', sans-serif" font-size="58" font-weight="700" letter-spacing="2">102.3</text>
+      <g fill="#ff7ecf">
+        <circle cx="188" cy="286" r="4.5" />
+        <circle cx="216" cy="286" r="4.5" />
+        <circle cx="244" cy="286" r="4.5" />
+        <circle cx="272" cy="286" r="4.5" />
+        <circle cx="300" cy="286" r="4.5" />
+      </g>
+
+      <rect x="130" y="311" width="232" height="63" rx="24" fill="rgba(20, 34, 57, 0.82)" stroke="rgba(95, 223, 255, 0.28)" stroke-width="2" />
+      <path d="M138 347c19-13 46-20 79-20 24 0 40 4 62 8 17 5 34 11 63 11 9 0 17-1 24-2v16c0 8-7 14-15 14H148c-8 0-15-6-15-14v-13c1 0 3 0 5 0Z" fill="url(#waterGrad)" />
+      <path d="M149 336c14-4 30-7 52-7 24 0 45 3 61 8 18 6 32 11 58 11 15 0 28-1 40-4-3-8-8-14-16-18-18-9-33-10-58-14-18-3-31-4-50-4-39 0-68 10-87 28Z" fill="rgba(255,255,255,0.3)" />
+      <g fill="rgba(222, 252, 255, 0.85)">
+        <circle cx="184" cy="328" r="5" />
+        <circle cx="220" cy="353" r="3.5" />
+        <circle cx="294" cy="334" r="4.5" />
+        <circle cx="332" cy="349" r="3.5" />
+      </g>
+
+      <ellipse cx="246" cy="368" rx="130" ry="41" fill="#08101d" stroke="rgba(217, 224, 245, 0.18)" stroke-width="5" />
+      <path d="M126 124c0-10 8-18 18-18h24v246h-24c-10 0-18-8-18-18V124Z" fill="url(#glossGrad)" opacity="0.55" />
+    </g>
+
+    <g>
+      <path d="M370 167c32 40 76 85 76 155 0 66-46 111-103 111-55 0-95-40-95-97 0-70 45-110 95-169 8-10 19-10 27 0Z" fill="url(#dropGrad)" stroke="rgba(255, 208, 240, 0.68)" stroke-width="6" />
+      <path d="M343 204c13 12 30 28 44 53 7 13 13 26 18 39 5 17 8 36 8 55 0 45-29 76-70 76-39 0-67-28-67-67 0-47 24-83 67-132Z" fill="rgba(255,255,255,0.1)" />
+      <path d="M368 188c16 12 26 27 31 46 2 7-4 12-10 10-16-6-30-18-39-33-6-11 8-30 18-23Z" fill="rgba(255,255,255,0.88)" />
+      <ellipse cx="356" cy="360" rx="40" ry="26" fill="rgba(255, 183, 229, 0.38)" />
+      <circle cx="315" cy="289" r="7" fill="rgba(255,255,255,0.42)" />
+      <circle cx="329" cy="320" r="4.5" fill="rgba(255,255,255,0.42)" />
+      <circle cx="379" cy="302" r="5.5" fill="rgba(255,255,255,0.42)" />
+    </g>
+  </g>
+</svg>

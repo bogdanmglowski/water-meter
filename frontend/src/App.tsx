@@ -237,6 +237,7 @@ function rangeToInputs(range: AppliedRange): RangeInputs {
 
 export default function App() {
   const readingsPerPage = 30;
+  const brandMarkUrl = `${import.meta.env.BASE_URL}brand-mark.svg`;
   const queryClient = useQueryClient();
   const [page, setPage] = useState<AppPage>(() => pageFromHash(window.location.hash));
   const [preset, setPreset] = useState<RangePreset>("30d");
@@ -787,9 +788,18 @@ export default function App() {
         <header className="topbar">
           <div className="topbar__main">
             <div className="brand-block">
-              <h1>
-                Water <span>Meter</span>
-              </h1>
+              <div className="brand-block__identity">
+                <div className="brand-block__icon-shell" aria-hidden="true">
+                  <img src={brandMarkUrl} alt="" className="brand-block__icon" />
+                </div>
+                <div className="brand-block__copy">
+                  <span className="eyebrow">Live telemetry</span>
+                  <h1>
+                    Water <span>Meter</span>
+                  </h1>
+                  <p>Usage analytics, anomalies, and reader imagery in one console.</p>
+                </div>
+              </div>
             </div>
 
             <nav className="page-nav" aria-label="Subpages">
