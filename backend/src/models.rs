@@ -65,6 +65,14 @@ pub struct DeleteReadingResponse {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct DeleteReaderImageResponse {
+    pub deleted: bool,
+    pub category: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct AnomalyDto {
     pub id: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -177,6 +185,7 @@ pub struct ReaderImageItem {
     pub kind: String,
     pub name: String,
     pub url: String,
+    pub path: String,
     pub captured_at: String,
 }
 
@@ -311,6 +320,7 @@ mod tests {
                         name: "2026-03-16_10-20-50.jpg".to_owned(),
                         url: "/api/reader/images/original/2026-03-16/2026-03-16_10-20-50.jpg"
                             .to_owned(),
+                        path: "2026-03-16/2026-03-16_10-20-50.jpg".to_owned(),
                         captured_at: "2026-03-16T10:20:50Z".to_owned(),
                     }],
                 }],
@@ -332,6 +342,10 @@ mod tests {
         );
         assert_eq!(gallery_json["originalImages"]["pageSize"], json!(7));
         assert_eq!(gallery_json["originalImages"]["dayGroups"][0]["day"], json!("2026-03-16"));
+        assert_eq!(
+            gallery_json["originalImages"]["dayGroups"][0]["items"][0]["path"],
+            json!("2026-03-16/2026-03-16_10-20-50.jpg")
+        );
         assert_eq!(
             gallery_json["originalImages"]["dayGroups"][0]["items"][0]["capturedAt"],
             json!("2026-03-16T10:20:50Z")

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use time::{Date, Duration, OffsetDateTime};
+
 use crate::error::{AppError, AppResult};
 use crate::models::{
     ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem,
@@ -59,6 +61,16 @@ pub fn resolve_image_path(
         return Err(AppError::BadRequest("invalid reader image path".to_owned()));
     }
 
+    match category {
+        "current" if relative != Path::new(CURRENT_CROP_NAME) => {
+            return Err(AppError::BadRequest("invalid reader image path".to_owned()));
+        }
+        "original" | "processed" if !is_supported_image(relative) => {
+            return Err(AppError::BadRequest("invalid reader image path".to_owned()));
+        }
+        _ => {}
+    }
+
     let path = root.join(relative);
     if !path.is_file() {
         return Err(AppError::NotFound(format!(
@@ -67,6 +79,40 @@ pub fn resolve_image_path(
     }
 
     Ok(path)
+}
+
+pub fn delete_image(
+    reader_runtime_dir: &Path,
+    category: &str,
+    relative_path: &str,
+) -> AppResult<()> {
+    let path = resolve_image_path(reader_runtime_dir, category, relative_path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(AppError::NotFound(format!(
+                "reader image '{relative_path}' was not found"
+            )));
+        }
+        Err(error) => return Err(AppError::Internal(error.to_string())),
+    }
+    remove_empty_parent_dirs(reader_runtime_dir, &path)?;
+    Ok(())
+}
+
+pub fn purge_old_images(
+    reader_runtime_dir: &Path,
+    now: OffsetDateTime,
+    retention_days: u16,
+) -> AppResult<usize> {
+    let cutoff_day = (now - Duration::days(i64::from(retention_days))).date();
+    let mut deleted = 0;
+
+    for category_root in [reader_runtime_dir.join("pictures"), reader_runtime_dir.join("processed")] {
+        deleted += purge_old_category(&category_root, cutoff_day)?;
+    }
+
+    Ok(deleted)
 }
 
 fn collect_images(root: &Path, kind: &str) -> AppResult<Vec<ReaderImageItem>> {
@@ -170,6 +216,7 @@ fn walk_images(
             kind: kind.to_owned(),
             name: name.to_owned(),
             url: format!("/api/reader/images/{kind}/{relative_url}"),
+            path: relative_url,
             captured_at,
         });
     }
@@ -200,6 +247,84 @@ fn path_to_url_path(path: &Path) -> AppResult<String> {
     Ok(parts.join("/"))
 }
 
+fn purge_old_category(root: &Path, cutoff_day: Date) -> AppResult<usize> {
+    if !root.exists() {
+        return Ok(0);
+    }
+
+    let mut deleted = 0;
+    for entry in fs::read_dir(root).map_err(|error| AppError::Internal(error.to_string()))? {
+        let entry = entry.map_err(|error| AppError::Internal(error.to_string()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let Some(day_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Ok(day) = Date::parse(day_name, &time::macros::format_description!("[year]-[month]-[day]")) else {
+            continue;
+        };
+
+        if day >= cutoff_day {
+            continue;
+        }
+
+        deleted += count_images_in_dir(&path)?;
+        fs::remove_dir_all(&path).map_err(|error| AppError::Internal(error.to_string()))?;
+    }
+
+    Ok(deleted)
+}
+
+fn count_images_in_dir(root: &Path) -> AppResult<usize> {
+    let mut count = 0;
+    for entry in fs::read_dir(root).map_err(|error| AppError::Internal(error.to_string()))? {
+        let entry = entry.map_err(|error| AppError::Internal(error.to_string()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        if file_type.is_dir() {
+            count += count_images_in_dir(&path)?;
+            continue;
+        }
+
+        if file_type.is_file() && is_supported_image(&path) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn remove_empty_parent_dirs(reader_runtime_dir: &Path, path: &Path) -> AppResult<()> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir == reader_runtime_dir
+            || dir == reader_runtime_dir.join("pictures")
+            || dir == reader_runtime_dir.join("processed")
+        {
+            break;
+        }
+
+        let mut entries = fs::read_dir(dir).map_err(|error| AppError::Internal(error.to_string()))?;
+        if entries.next().is_some() {
+            break;
+        }
+
+        fs::remove_dir(dir).map_err(|error| AppError::Internal(error.to_string()))?;
+        current = dir.parent();
+    }
+
+    Ok(())
+}
+
 fn captured_at_from_relative(path: &Path) -> AppResult<String> {
     let day = path
         .parent()
@@ -226,8 +351,9 @@ fn captured_at_from_relative(path: &Path) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use time::macros::datetime;
 
-    use super::{build_gallery, resolve_image_path};
+    use super::{build_gallery, delete_image, purge_old_images, resolve_image_path};
 
     fn touch(path: &Path) {
         if let Some(parent) = path.parent() {
@@ -293,5 +419,55 @@ mod tests {
             .expect_err("should reject parent segments");
 
         assert_eq!(error.to_string(), "invalid reader image path");
+    }
+
+    #[test]
+    fn resolve_image_path_restricts_current_category_to_current_crop() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        touch(&tempdir.path().join("other-file.png"));
+
+        let error = resolve_image_path(tempdir.path(), "current", "other-file.png")
+            .expect_err("should reject non-crop current file");
+
+        assert_eq!(error.to_string(), "invalid reader image path");
+    }
+
+    #[test]
+    fn delete_image_removes_file_and_empty_day_directory() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let root = tempdir.path();
+        let image_path = root.join("pictures/2026-03-16/2026-03-16_10-20-50.jpg");
+        touch(&image_path);
+
+        delete_image(root, "original", "2026-03-16/2026-03-16_10-20-50.jpg")
+            .expect("delete image");
+
+        assert!(!image_path.exists());
+        assert!(!root.join("pictures/2026-03-16").exists());
+    }
+
+    #[test]
+    fn purge_old_images_deletes_archives_older_than_retention_days() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let root = tempdir.path();
+        let old_original = root.join("pictures/2026-03-10/2026-03-10_10-20-50.jpg");
+        let recent_original = root.join("pictures/2026-04-15/2026-04-15_10-20-50.jpg");
+        let old_processed = root.join("processed/2026-03-01/2026-03-01_08-00-00.jpg");
+        let current_crop = root.join("meter-crop.png");
+        touch(&old_original);
+        touch(&recent_original);
+        touch(&old_processed);
+        touch(&current_crop);
+
+        let deleted = purge_old_images(root, datetime!(2026-04-20 00:00 UTC), 30)
+            .expect("purge old images");
+
+        assert_eq!(deleted, 2);
+        assert!(!old_original.exists());
+        assert!(recent_original.exists());
+        assert!(!old_processed.exists());
+        assert!(current_crop.exists());
+        assert!(!root.join("pictures/2026-03-10").exists());
+        assert!(!root.join("processed/2026-03-01").exists());
     }
 }

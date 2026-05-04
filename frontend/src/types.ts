@@ -68,6 +68,7 @@ export interface ReaderImageItem {
   kind: string;
   name: string;
   url: string;
+  path: string;
   capturedAt: string;
 }
 

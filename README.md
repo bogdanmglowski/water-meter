@@ -133,6 +133,8 @@ cp .env.example .env
 - `CLIENT_HOST`: host name or LAN IP shown in container startup logs
 - `CLIENT_PORT`: published frontend port
 - `CLIENT_ORIGIN`: allowed frontend origin for backend CORS
+- `READER_RUNTIME_DIR`: backend path for current crop and archived reader images
+- `READER_IMAGE_RETENTION_DAYS`: auto-delete archived reader images older than this many days
 - `POSTGRES_DB`: database name used by Docker and seed script
 - `POSTGRES_USER`: database user
 - `POSTGRES_PASSWORD`: database password

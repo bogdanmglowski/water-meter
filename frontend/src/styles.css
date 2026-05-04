@@ -335,6 +335,16 @@ a:focus-visible {
   background: rgba(40, 42, 54, 0.5);
 }
 
+.image-feature-stack {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.image-feature__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .image-feature__image,
 .image-card__image {
   display: block;
@@ -436,6 +446,13 @@ a:focus-visible {
   gap: 0.2rem;
 }
 
+.image-card__footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
 .image-card__meta strong {
   color: var(--color-polar-white);
   font-size: 0.96rem;
@@ -446,6 +463,36 @@ a:focus-visible {
   color: var(--color-silver-text);
   opacity: 0.72;
   font-size: 0.9rem;
+}
+
+.image-delete-button {
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0.72rem 0.95rem;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--color-danger-red);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.image-delete-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(248, 113, 113, 0.48);
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.image-delete-button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .hero-grid {

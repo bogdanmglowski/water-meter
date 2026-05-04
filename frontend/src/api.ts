@@ -259,3 +259,13 @@ export function getReaderGalleryPage(params: {
     processedImages: gallery.processedImages,
   }));
 }
+
+export function deleteReaderImage(category: string, path: string) {
+  return request<{ deleted: boolean; category: string; path: string }>(
+    `/api/reader/images/${encodeURIComponent(category)}/${path}`,
+    undefined,
+    {
+      method: "DELETE",
+    },
+  );
+}

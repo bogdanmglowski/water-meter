@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  deleteReaderImage,
   deleteReading,
   getAlerts,
   getAnomalies,
@@ -119,21 +120,44 @@ function pageFromHash(hash: string): AppPage {
   }
 }
 
-function renderReaderImageCard(image: ReaderImageItem) {
+function renderReaderImageCard(
+  image: ReaderImageItem,
+  isDeletePending: boolean,
+  isDeleting: boolean,
+  onDeleteImage: (image: ReaderImageItem) => void,
+) {
   return (
     <article key={image.url} className="image-card">
       <a href={image.url} target="_blank" rel="noreferrer" className="image-card__media-link">
         <img src={image.url} alt={image.name} className="image-card__image" loading="lazy" />
       </a>
-      <div className="image-card__meta">
-        <strong>{image.name}</strong>
-        <span>{formatTimestamp(image.capturedAt)}</span>
+      <div className="image-card__footer">
+        <div className="image-card__meta">
+          <strong>{image.name}</strong>
+          <span>{formatTimestamp(image.capturedAt)}</span>
+        </div>
+        <button
+          type="button"
+          className="image-delete-button"
+          onClick={() => onDeleteImage(image)}
+          disabled={isDeletePending}
+          aria-label={`Delete image ${image.name}`}
+          title="Delete image"
+        >
+          {isDeleting ? "..." : "🗑"}
+        </button>
       </div>
     </article>
   );
 }
 
-function renderReaderDayGroup(dayGroup: ReaderImageDayGroup, defaultOpen = false) {
+function renderReaderDayGroup(
+  dayGroup: ReaderImageDayGroup,
+  defaultOpen: boolean,
+  isDeletePending: boolean,
+  deletingImagePath: string | null,
+  onDeleteImage: (image: ReaderImageItem) => void,
+) {
   return (
     <details key={dayGroup.day} className="image-day-group" open={defaultOpen}>
       <summary className="image-day-group__summary">
@@ -144,7 +168,14 @@ function renderReaderDayGroup(dayGroup: ReaderImageDayGroup, defaultOpen = false
         <span className="count-pill">{dayGroup.items.length}</span>
       </summary>
       <div className="image-grid image-grid--grouped">
-        {dayGroup.items.map((image) => renderReaderImageCard(image))}
+        {dayGroup.items.map((image) =>
+          renderReaderImageCard(
+            image,
+            isDeletePending,
+            deletingImagePath === image.path,
+            onDeleteImage,
+          ),
+        )}
       </div>
     </details>
   );
@@ -221,6 +252,7 @@ export default function App() {
   const [originalGalleryPage, setOriginalGalleryPage] = useState(1);
   const [processedGalleryPage, setProcessedGalleryPage] = useState(1);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteImageError, setDeleteImageError] = useState<string | null>(null);
   const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
   useEffect(() => {
@@ -458,6 +490,19 @@ export default function App() {
     },
   });
 
+  const deleteReaderImageMutation = useMutation({
+    mutationFn: ({ category, path }: { category: string; path: string }) =>
+      deleteReaderImage(category, path),
+    onSuccess: async () => {
+      setDeleteImageError(null);
+      await queryClient.invalidateQueries({ queryKey: ["reader-gallery"] });
+    },
+    onError: async (error) => {
+      setDeleteImageError(error instanceof Error ? error.message : "Delete image request failed.");
+      await queryClient.invalidateQueries({ queryKey: ["reader-gallery"] });
+    },
+  });
+
   const error = isDashboardPage
     ? dashboardQuery.error
     : isCumulativePage
@@ -498,6 +543,36 @@ export default function App() {
     }
 
     deleteReadingMutation.mutate(reading.id);
+  }
+
+  function handleDeleteReaderImage(image: ReaderImageItem) {
+    const shouldDelete = window.confirm(
+      `Delete image ${image.name}? This will remove it from the reader runtime directory.`,
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    deleteReaderImageMutation.mutate({
+      category: image.kind,
+      path: image.path,
+    });
+  }
+
+  function handleDeleteCurrentCrop() {
+    const shouldDelete = window.confirm(
+      "Delete the current OCR crop? This will remove meter-crop.png from the reader runtime directory.",
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    deleteReaderImageMutation.mutate({
+      category: "current",
+      path: "meter-crop.png",
+    });
   }
 
   const cumulativeOption: WaterMeterChartOption = {
@@ -960,6 +1035,13 @@ export default function App() {
               </p>
             </section>
 
+            {deleteImageError ? (
+              <section className="card error-card">
+                <strong>Image delete request failed.</strong>
+                <p>{deleteImageError}</p>
+              </section>
+            ) : null}
+
             <section className="grid-two">
               <section className="card image-feature-card">
                 <div className="section-head">
@@ -971,18 +1053,33 @@ export default function App() {
                 </div>
 
                 {readerGallery?.currentCropUrl ? (
-                  <a
-                    href={readerGallery.currentCropUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="image-feature"
-                  >
-                    <img
-                      src={readerGallery.currentCropUrl}
-                      alt="Current OCR crop"
-                      className="image-feature__image"
-                    />
-                  </a>
+                  <div className="image-feature-stack">
+                    <a
+                      href={readerGallery.currentCropUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="image-feature"
+                    >
+                      <img
+                        src={readerGallery.currentCropUrl}
+                        alt="Current OCR crop"
+                        className="image-feature__image"
+                      />
+                    </a>
+                    <div className="image-feature__actions">
+                      <button
+                        type="button"
+                        className="image-delete-button"
+                        onClick={handleDeleteCurrentCrop}
+                        disabled={deleteReaderImageMutation.isPending}
+                      >
+                        {deleteReaderImageMutation.isPending &&
+                        deleteReaderImageMutation.variables?.category === "current"
+                          ? "..."
+                          : "🗑 Delete current crop"}
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="empty-state">
                     <strong>No current crop available.</strong>
@@ -1014,7 +1111,13 @@ export default function App() {
                 {readerGallery && readerGallery.originalImages.dayGroups.length > 0 ? (
                   <div className="image-day-group-list">
                     {readerGallery.originalImages.dayGroups.map((dayGroup, index) =>
-                      renderReaderDayGroup(dayGroup, index === 0),
+                      renderReaderDayGroup(
+                        dayGroup,
+                        index === 0,
+                        deleteReaderImageMutation.isPending,
+                        deleteReaderImageMutation.variables?.path ?? null,
+                        handleDeleteReaderImage,
+                      ),
                     )}
                   </div>
                 ) : (
@@ -1049,7 +1152,13 @@ export default function App() {
               {readerGallery && readerGallery.processedImages.dayGroups.length > 0 ? (
                 <div className="image-day-group-list">
                   {readerGallery.processedImages.dayGroups.map((dayGroup, index) =>
-                    renderReaderDayGroup(dayGroup, index === 0),
+                    renderReaderDayGroup(
+                      dayGroup,
+                      index === 0,
+                      deleteReaderImageMutation.isPending,
+                      deleteReaderImageMutation.variables?.path ?? null,
+                      handleDeleteReaderImage,
+                    ),
                   )}
                 </div>
               ) : (
@@ -1089,6 +1198,7 @@ export default function App() {
                 <p>{deleteError}</p>
               </section>
             ) : null}
+
 
             <ReadingsTable
               readings={rawReadings}

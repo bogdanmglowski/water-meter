@@ -24,15 +24,16 @@ use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AlertDto, AnomalyDto, ConsumptionQuery, DashboardQuery, DashboardResponse,
-    DeleteReadingResponse, HealthResponse, RangeQuery, ReaderGalleryQuery,
+    DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse, RangeQuery, ReaderGalleryQuery,
     ReaderGalleryResponse, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
 };
-use crate::reader_files::{build_gallery, resolve_image_path};
+use crate::reader_files::{build_gallery, delete_image, purge_old_images, resolve_image_path};
 
 #[derive(Clone)]
 struct AppState {
     pool: PgPool,
     reader_runtime_dir: PathBuf,
+    reader_image_retention_days: u16,
 }
 
 #[derive(OpenApi)]
@@ -42,6 +43,7 @@ struct AppState {
         dashboard,
         readings,
         delete_reading,
+        delete_reader_image,
         anomalies,
         cumulative_series,
         consumption_series,
@@ -56,6 +58,7 @@ struct AppState {
             ReadingDto,
             ReadingsPageDto,
             DeleteReadingResponse,
+            DeleteReaderImageResponse,
             AnomalyDto,
             UsagePoint,
             AlertDto,
@@ -86,11 +89,24 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&config.database_url).await?;
     db::run_migrations(&pool).await?;
     let allowed_origin = HeaderValue::from_str(&config.client_origin)?;
+    let now = OffsetDateTime::now_utc();
+    if let Err(error) = purge_old_images(
+        &config.reader_runtime_dir,
+        now,
+        config.reader_image_retention_days,
+    ) {
+        tracing::warn!(?error, "failed to purge old reader images during startup");
+    }
 
     let state = AppState {
         pool,
         reader_runtime_dir: config.reader_runtime_dir,
+        reader_image_retention_days: config.reader_image_retention_days,
     };
+    spawn_reader_image_cleanup(
+        state.reader_runtime_dir.clone(),
+        state.reader_image_retention_days,
+    );
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/dashboard", get(dashboard))
@@ -101,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
         .route("/api/reader/gallery", get(reader_gallery))
+        .route("/api/reader/images/{category}/{*path}", delete(delete_reader_image))
         .route("/api/reader/images/{category}/{*path}", get(reader_image))
         .route("/api/openapi.json", get(openapi))
         .with_state(state)
@@ -301,6 +318,30 @@ async fn reader_gallery(
 }
 
 #[utoipa::path(
+    delete,
+    path = "/api/reader/images/{category}/{path}",
+    params(
+        ("category" = String, Path, description = "Image category: current, original, or processed"),
+        ("path" = String, Path, description = "Relative image path")
+    ),
+    responses(
+        (status = 200, description = "Reader image deleted", body = DeleteReaderImageResponse),
+        (status = 404, description = "Reader image not found")
+    )
+)]
+async fn delete_reader_image(
+    State(state): State<AppState>,
+    Path((category, path)): Path<(String, String)>,
+) -> AppResult<Json<DeleteReaderImageResponse>> {
+    delete_image(&state.reader_runtime_dir, &category, &path)?;
+    Ok(Json(DeleteReaderImageResponse {
+        deleted: true,
+        category,
+        path,
+    }))
+}
+
+#[utoipa::path(
     get,
     path = "/api/reader/images/{category}/{path}",
     params(
@@ -375,6 +416,20 @@ fn mime_for_path(path: &std::path::Path) -> &'static str {
         Some("jpg" | "jpeg") => "image/jpeg",
         _ => "application/octet-stream",
     }
+}
+
+fn spawn_reader_image_cleanup(reader_runtime_dir: PathBuf, retention_days: u16) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60 * 24));
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+            if let Err(error) = purge_old_images(&reader_runtime_dir, OffsetDateTime::now_utc(), retention_days) {
+                tracing::warn!(?error, "failed to purge old reader images");
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {
