@@ -45,6 +45,7 @@ pub fn resolve_image_path(
         "current" => reader_runtime_dir.to_path_buf(),
         "original" => reader_runtime_dir.join("pictures"),
         "processed" => reader_runtime_dir.join("processed"),
+        "anomaly" => reader_runtime_dir.join("anomalies"),
         other => {
             return Err(AppError::NotFound(format!(
                 "reader image category '{other}' was not found"
@@ -54,9 +55,12 @@ pub fn resolve_image_path(
 
     let relative = Path::new(relative_path);
     if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
     {
         return Err(AppError::BadRequest("invalid reader image path".to_owned()));
     }
@@ -65,7 +69,7 @@ pub fn resolve_image_path(
         "current" if relative != Path::new(CURRENT_CROP_NAME) => {
             return Err(AppError::BadRequest("invalid reader image path".to_owned()));
         }
-        "original" | "processed" if !is_supported_image(relative) => {
+        "original" | "processed" | "anomaly" if !is_supported_image(relative) => {
             return Err(AppError::BadRequest("invalid reader image path".to_owned()));
         }
         _ => {}
@@ -118,7 +122,10 @@ pub fn purge_old_images(
     let cutoff_day = (now - Duration::days(i64::from(retention_days))).date();
     let mut deleted = 0;
 
-    for category_root in [reader_runtime_dir.join("pictures"), reader_runtime_dir.join("processed")] {
+    for category_root in [
+        reader_runtime_dir.join("pictures"),
+        reader_runtime_dir.join("processed"),
+    ] {
         deleted += purge_old_category(&category_root, cutoff_day)?;
     }
 
@@ -277,7 +284,10 @@ fn purge_old_category(root: &Path, cutoff_day: Date) -> AppResult<usize> {
         let Some(day_name) = path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
-        let Ok(day) = Date::parse(day_name, &time::macros::format_description!("[year]-[month]-[day]")) else {
+        let Ok(day) = Date::parse(
+            day_name,
+            &time::macros::format_description!("[year]-[month]-[day]"),
+        ) else {
             continue;
         };
 
@@ -319,11 +329,13 @@ fn remove_empty_parent_dirs(reader_runtime_dir: &Path, path: &Path) -> AppResult
         if dir == reader_runtime_dir
             || dir == reader_runtime_dir.join("pictures")
             || dir == reader_runtime_dir.join("processed")
+            || dir == reader_runtime_dir.join("anomalies")
         {
             break;
         }
 
-        let mut entries = fs::read_dir(dir).map_err(|error| AppError::Internal(error.to_string()))?;
+        let mut entries =
+            fs::read_dir(dir).map_err(|error| AppError::Internal(error.to_string()))?;
         if entries.next().is_some() {
             break;
         }
@@ -347,7 +359,9 @@ fn captured_at_from_relative(path: &Path) -> AppResult<String> {
         .ok_or_else(|| AppError::Internal("invalid reader image file name".to_owned()))?;
 
     if !stem.starts_with(day) {
-        return Err(AppError::Internal("reader image timestamp does not match directory".to_owned()));
+        return Err(AppError::Internal(
+            "reader image timestamp does not match directory".to_owned(),
+        ));
     }
 
     let time = stem
@@ -392,13 +406,19 @@ mod tests {
         assert_eq!(gallery.original_images.total_days, 2);
         assert_eq!(gallery.original_images.day_groups.len(), 2);
         assert_eq!(gallery.original_images.day_groups[0].day, "2026-03-16");
-        assert_eq!(gallery.original_images.day_groups[0].items[0].captured_at, "2026-03-16T10:20:50Z");
+        assert_eq!(
+            gallery.original_images.day_groups[0].items[0].captured_at,
+            "2026-03-16T10:20:50Z"
+        );
         assert_eq!(
             gallery.original_images.day_groups[0].items[0].url,
             "/api/reader/images/original/2026-03-16/2026-03-16_10-20-50.jpg"
         );
         assert_eq!(gallery.processed_images.day_groups.len(), 1);
-        assert_eq!(gallery.processed_images.day_groups[0].items[0].kind, "processed");
+        assert_eq!(
+            gallery.processed_images.day_groups[0].items[0].kind,
+            "processed"
+        );
     }
 
     #[test]
@@ -443,14 +463,31 @@ mod tests {
     }
 
     #[test]
+    fn resolve_image_path_supports_anomaly_category() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let image_path = tempdir
+            .path()
+            .join("anomalies/2026-03-16/2026-03-16_10-20-50_anomaly-7.png");
+        touch(&image_path);
+
+        let resolved = resolve_image_path(
+            tempdir.path(),
+            "anomaly",
+            "2026-03-16/2026-03-16_10-20-50_anomaly-7.png",
+        )
+        .expect("resolve anomaly image");
+
+        assert_eq!(resolved, image_path);
+    }
+
+    #[test]
     fn delete_image_removes_file_and_empty_day_directory() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let root = tempdir.path();
         let image_path = root.join("pictures/2026-03-16/2026-03-16_10-20-50.jpg");
         touch(&image_path);
 
-        delete_image(root, "original", "2026-03-16/2026-03-16_10-20-50.jpg")
-            .expect("delete image");
+        delete_image(root, "original", "2026-03-16/2026-03-16_10-20-50.jpg").expect("delete image");
 
         assert!(!image_path.exists());
         assert!(!root.join("pictures/2026-03-16").exists());
@@ -500,8 +537,8 @@ mod tests {
         touch(&old_processed);
         touch(&current_crop);
 
-        let deleted = purge_old_images(root, datetime!(2026-04-20 00:00 UTC), 30)
-            .expect("purge old images");
+        let deleted =
+            purge_old_images(root, datetime!(2026-04-20 00:00 UTC), 30).expect("purge old images");
 
         assert_eq!(deleted, 2);
         assert!(!old_original.exists());

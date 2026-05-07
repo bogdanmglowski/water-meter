@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::models::{
-    AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary, DbAnomaly,
-    DbReading, ReadingDto, ReadingsPageDto, UsagePoint,
+    AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary, DbAnomaly, DbReading,
+    ReadingDto, ReadingsPageDto, UsagePoint,
 };
 
 const LITERS_PER_CUBIC_METER: i64 = 1_000;
@@ -79,7 +79,9 @@ pub fn resolve_readings_page(
     };
     let page = requested_page.max(1).min(total_pages);
     let newer_items_skipped = (page - 1) * page_size;
-    let limit = total_count.saturating_sub(newer_items_skipped).min(page_size);
+    let limit = total_count
+        .saturating_sub(newer_items_skipped)
+        .min(page_size);
     let offset = total_count.saturating_sub(newer_items_skipped + limit);
 
     ReadingsPage {
@@ -121,7 +123,10 @@ pub fn build_dashboard(
             last_7d_m3: sum_usage_between(&intervals, now - Duration::days(7), now),
             month_to_date_m3: sum_usage_between(&intervals, month_start, now),
             active_alerts,
-            anomaly_count: intervals.iter().filter(|interval| interval.negative_delta).count()
+            anomaly_count: intervals
+                .iter()
+                .filter(|interval| interval.negative_delta)
+                .count()
                 + logged_anomaly_count,
         },
         latest_reading: readings.last().map(map_reading),
@@ -364,8 +369,11 @@ fn overnight_leak_alert(
         return None;
     }
 
-    let average =
-        recent_nights.iter().map(|(_, total)| *total as f64).sum::<f64>() / recent_nights.len() as f64;
+    let average = recent_nights
+        .iter()
+        .map(|(_, total)| *total as f64)
+        .sum::<f64>()
+        / recent_nights.len() as f64;
     let all_nonzero = recent_nights
         .iter()
         .all(|(_, total)| *total >= LITERS_PER_CUBIC_METER);
@@ -417,6 +425,11 @@ fn map_anomaly(anomaly: &DbAnomaly) -> AnomalyDto {
         delta_m3: anomaly.delta_m3,
         threshold_m3: anomaly.threshold_m3,
         source: anomaly.source.clone(),
+        image_url: anomaly
+            .image_path
+            .as_ref()
+            .map(|path| format!("/api/reader/images/anomaly/{path}")),
+        archived: anomaly.archived_at.is_some(),
         created_at: anomaly.created_at,
     }
 }
@@ -551,8 +564,14 @@ mod tests {
         assert_eq!(page.offset, 0);
         assert_eq!(page.limit, 2);
         assert_eq!(response.total_count, 2);
-        assert_eq!(response.items[0].id, datetime!(2026-04-01 01:00 UTC).unix_timestamp());
-        assert_eq!(response.items[1].id, datetime!(2026-04-01 00:00 UTC).unix_timestamp());
+        assert_eq!(
+            response.items[0].id,
+            datetime!(2026-04-01 01:00 UTC).unix_timestamp()
+        );
+        assert_eq!(
+            response.items[1].id,
+            datetime!(2026-04-01 00:00 UTC).unix_timestamp()
+        );
     }
 
     #[test]
@@ -630,7 +649,11 @@ mod tests {
     #[test]
     fn readings_page_leaves_oldest_row_without_delta() {
         let response = build_readings_page(
-            &[reading_with_delta(datetime!(2026-04-01 00:00 UTC), 10_000, None)],
+            &[reading_with_delta(
+                datetime!(2026-04-01 00:00 UTC),
+                10_000,
+                None,
+            )],
             ReadingsPage {
                 page: 2,
                 page_size: 2,

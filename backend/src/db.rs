@@ -1,6 +1,6 @@
+use sqlx::PgExecutor;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgExecutor;
 use time::OffsetDateTime;
 
 use crate::models::{DbAnomaly, DbReading};
@@ -98,6 +98,7 @@ pub async fn fetch_anomalies(
     pool: &PgPool,
     from: Option<OffsetDateTime>,
     to: Option<OffsetDateTime>,
+    include_archived: bool,
 ) -> Result<Vec<DbAnomaly>, sqlx::Error> {
     sqlx::query_as::<_, DbAnomaly>(
         r#"
@@ -110,16 +111,48 @@ pub async fn fetch_anomalies(
             delta_m3,
             threshold_m3,
             source,
+            image_path,
+            archived_at,
             created_at
         FROM meter_reading_anomalies
         WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
           AND ($2::timestamptz IS NULL OR recorded_at <= $2)
+          AND ($3::bool OR archived_at IS NULL)
         ORDER BY recorded_at DESC, id DESC
         "#,
     )
     .bind(from)
     .bind(to)
+    .bind(include_archived)
     .fetch_all(pool)
+    .await
+}
+
+pub async fn archive_anomaly(pool: &PgPool, id: i64) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        UPDATE meter_reading_anomalies
+        SET archived_at = COALESCE(archived_at, NOW())
+        WHERE id = $1
+        RETURNING id
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn unarchive_anomaly(pool: &PgPool, id: i64) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        UPDATE meter_reading_anomalies
+        SET archived_at = NULL
+        WHERE id = $1
+        RETURNING id
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
     .await
 }
 
@@ -134,6 +167,7 @@ pub async fn count_anomalies(
         FROM meter_reading_anomalies
         WHERE recorded_at >= $1
           AND recorded_at <= $2
+          AND archived_at IS NULL
         "#,
     )
     .bind(from)
@@ -158,8 +192,7 @@ pub async fn fetch_window_readings(
     )
     .bind(from)
     .fetch_optional(pool)
-    .await
-    ?;
+    .await?;
 
     let mut readings = sqlx::query_as::<_, DbReading>(
         r#"

@@ -3,9 +3,19 @@ import { formatTimestamp, formatVolume } from "../utils";
 
 interface AnomaliesTableProps {
   anomalies: AnomalyItem[];
+  showArchived: boolean;
+  pendingAnomalyId: number | null;
+  onArchiveAnomaly: (anomaly: AnomalyItem) => void;
+  onUnarchiveAnomaly: (anomaly: AnomalyItem) => void;
 }
 
-export function AnomaliesTable({ anomalies }: AnomaliesTableProps) {
+export function AnomaliesTable({
+  anomalies,
+  showArchived,
+  pendingAnomalyId,
+  onArchiveAnomaly,
+  onUnarchiveAnomaly,
+}: AnomaliesTableProps) {
   return (
     <section className="card">
       <div className="section-head">
@@ -17,8 +27,12 @@ export function AnomaliesTable({ anomalies }: AnomaliesTableProps) {
 
       {anomalies.length === 0 ? (
         <div className="empty-state">
-          <strong>No anomalies in this range.</strong>
-          <p>Large positive jumps will appear here instead of being inserted into readings.</p>
+          <strong>No anomalies match the current filter.</strong>
+          <p>
+            {showArchived
+              ? "This range has no active or archived anomalies to review."
+              : "Large positive jumps will appear here until you archive them manually."}
+          </p>
         </div>
       ) : (
         <div className="table-wrap">
@@ -31,6 +45,8 @@ export function AnomaliesTable({ anomalies }: AnomaliesTableProps) {
                 <th>Delta</th>
                 <th>Threshold</th>
                 <th>Source</th>
+                <th>Evidence</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -44,6 +60,48 @@ export function AnomaliesTable({ anomalies }: AnomaliesTableProps) {
                   <td>{formatVolume(anomaly.deltaM3)}</td>
                   <td>{formatVolume(anomaly.thresholdM3)}</td>
                   <td>{anomaly.source}</td>
+                  <td>
+                    <div className="anomaly-evidence">
+                      {anomaly.imageUrl ? (
+                        <a
+                          href={anomaly.imageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="anomaly-link"
+                        >
+                          Open image
+                        </a>
+                      ) : (
+                        <span className="anomaly-muted">No image</span>
+                      )}
+                      <span
+                        className={`anomaly-status ${anomaly.archived ? "anomaly-status--archived" : "anomaly-status--active"}`}
+                      >
+                        {anomaly.archived ? "Archived" : "Active"}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="reading-table__actions">
+                    {anomaly.archived ? (
+                      <button
+                        type="button"
+                        className="reading-archive-button"
+                        onClick={() => onUnarchiveAnomaly(anomaly)}
+                        disabled={pendingAnomalyId === anomaly.id}
+                      >
+                        {pendingAnomalyId === anomaly.id ? "Restoring..." : "Unarchive"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="reading-archive-button"
+                        onClick={() => onArchiveAnomaly(anomaly)}
+                        disabled={pendingAnomalyId === anomaly.id}
+                      >
+                        {pendingAnomalyId === anomaly.id ? "Archiving..." : "Archive"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

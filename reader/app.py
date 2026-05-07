@@ -6,8 +6,9 @@ import contextlib
 import json
 import os
 import re
-import threading
+import shutil
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -166,8 +167,9 @@ def format_postgres_target(target: PostgresTarget | None) -> str:
 
 
 class PostgresWriter:
-    def __init__(self, target: PostgresTarget) -> None:
+    def __init__(self, target: PostgresTarget, *, crop_output_path: Path | None = None) -> None:
         self.target = target
+        self.crop_output_path = crop_output_path
         self._connection: Any | None = None
 
     def close(self) -> None:
@@ -245,6 +247,7 @@ class PostgresWriter:
                 delta_m3 = EXCLUDED.delta_m3,
                 threshold_m3 = EXCLUDED.threshold_m3,
                 source = EXCLUDED.source
+            RETURNING id
             """,
             (
                 recorded_at,
@@ -256,6 +259,43 @@ class PostgresWriter:
                 self.target.source,
             ),
         )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("Failed to fetch anomaly identifier")
+
+        anomaly_id = int(row[0])
+        try:
+            image_path = self._copy_anomaly_image(recorded_at, anomaly_id)
+            if image_path is None:
+                return
+
+            cursor.execute(
+                """
+                UPDATE meter_reading_anomalies
+                SET image_path = %s
+                WHERE id = %s
+                """,
+                (image_path, anomaly_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"Warning: anomaly {anomaly_id} was stored without snapshot image: {exc}",
+                file=sys.stderr,
+            )
+
+    def _copy_anomaly_image(self, recorded_at: datetime, anomaly_id: int) -> str | None:
+        if self.crop_output_path is None:
+            return None
+        if not self.crop_output_path.is_file():
+            raise RuntimeError(f"Anomaly crop source '{self.crop_output_path}' was not found")
+
+        anomaly_root = self.crop_output_path.parent / "anomalies"
+        day_dir = anomaly_root / recorded_at.strftime("%Y-%m-%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        suffix = self.crop_output_path.suffix or ".png"
+        image_path = day_dir / f"{recorded_at.strftime('%Y-%m-%d_%H-%M-%S')}_anomaly-{anomaly_id}{suffix}"
+        shutil.copy2(self.crop_output_path, image_path)
+        return image_path.relative_to(anomaly_root).as_posix()
 
     def persist(self, timestamp: datetime, value: int) -> None:
         recorded_at = normalize_postgres_timestamp(timestamp)
@@ -726,7 +766,7 @@ def main(argv: list[str] | None = None) -> int:
     postgres_writer: PostgresWriter | None = None
     if postgres_target is not None:
         try:
-            postgres_writer = PostgresWriter(postgres_target)
+            postgres_writer = PostgresWriter(postgres_target, crop_output_path=crop_output_path)
             postgres_writer.connect()
         except RuntimeError as exc:
             print(exc, file=sys.stderr)

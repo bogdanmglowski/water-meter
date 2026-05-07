@@ -22,6 +22,8 @@ pub struct DbAnomaly {
     pub delta_m3: i64,
     pub threshold_m3: i64,
     pub source: String,
+    pub image_path: Option<String>,
+    pub archived_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
 }
 
@@ -86,9 +88,18 @@ pub struct AnomalyDto {
     pub delta_m3: i64,
     pub threshold_m3: i64,
     pub source: String,
+    pub image_url: Option<String>,
+    pub archived: bool,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveAnomalyResponse {
+    pub id: i64,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -161,6 +172,13 @@ pub struct RangeQuery {
     pub from: Option<String>,
     pub to: Option<String>,
     pub tz_offset_minutes: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnomaliesQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub include_archived: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,9 +262,9 @@ mod tests {
     use time::macros::datetime;
 
     use super::{
-        AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary,
-        ManualReadResponse, ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup,
-        ReaderImageItem, ReadingDto, UsagePoint,
+        AlertDto, AlertSeverity, AnomalyDto, ArchiveAnomalyResponse, DashboardResponse,
+        DashboardSummary, ManualReadResponse, ReaderGalleryResponse, ReaderGallerySection,
+        ReaderImageDayGroup, ReaderImageItem, ReadingDto, UsagePoint,
     };
 
     #[test]
@@ -298,13 +316,24 @@ mod tests {
             delta_m3: 150,
             threshold_m3: 100,
             source: "reader".to_owned(),
+            image_url: Some(
+                "/api/reader/images/anomaly/2026-04-26/2026-04-26_09-08-07_anomaly-12.png"
+                    .to_owned(),
+            ),
+            archived: true,
             created_at: datetime!(2026-04-26 09:08:08 UTC),
+        };
+        let archive_response = ArchiveAnomalyResponse {
+            id: 12,
+            archived: true,
         };
 
         let response_json = serde_json::to_value(response).expect("dashboard serializes");
         let point_json = serde_json::to_value(point).expect("usage point serializes");
         let alert_json = serde_json::to_value(alert).expect("alert serializes");
         let anomaly_json = serde_json::to_value(anomaly).expect("anomaly serializes");
+        let archive_response_json =
+            serde_json::to_value(archive_response).expect("archive response serializes");
 
         assert_eq!(response_json["generatedAt"], json!("2026-04-26T10:11:12Z"));
         assert_eq!(response_json["latestReading"]["id"], json!(7));
@@ -317,8 +346,18 @@ mod tests {
         assert_eq!(alert_json["startsAt"], json!("2026-04-25T22:00:00Z"));
         assert_eq!(alert_json["endsAt"], json!("2026-04-25T23:00:00Z"));
         assert_eq!(anomaly_json["recordedAt"], json!("2026-04-26T09:08:07Z"));
-        assert_eq!(anomaly_json["previousRecordedAt"], json!("2026-04-26T09:03:07Z"));
+        assert_eq!(
+            anomaly_json["previousRecordedAt"],
+            json!("2026-04-26T09:03:07Z")
+        );
+        assert_eq!(
+            anomaly_json["imageUrl"],
+            json!("/api/reader/images/anomaly/2026-04-26/2026-04-26_09-08-07_anomaly-12.png")
+        );
+        assert_eq!(anomaly_json["archived"], json!(true));
         assert_eq!(anomaly_json["createdAt"], json!("2026-04-26T09:08:08Z"));
+        assert_eq!(archive_response_json["id"], json!(12));
+        assert_eq!(archive_response_json["archived"], json!(true));
     }
 
     #[test]
@@ -358,7 +397,10 @@ mod tests {
             json!("/api/reader/images/current/meter-crop.png")
         );
         assert_eq!(gallery_json["originalImages"]["pageSize"], json!(7));
-        assert_eq!(gallery_json["originalImages"]["dayGroups"][0]["day"], json!("2026-03-16"));
+        assert_eq!(
+            gallery_json["originalImages"]["dayGroups"][0]["day"],
+            json!("2026-03-16")
+        );
         assert_eq!(
             gallery_json["originalImages"]["dayGroups"][0]["items"][0]["path"],
             json!("2026-03-16/2026-03-16_10-20-50.jpg")
@@ -392,4 +434,5 @@ mod tests {
             json!("2026-03-16/2026-03-16_10-20-50.jpg")
         );
     }
+
 }

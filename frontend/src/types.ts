@@ -46,6 +46,8 @@ export interface AnomalyItem {
   deltaM3: number;
   thresholdM3: number;
   source: string;
+  imageUrl: string | null;
+  archived: boolean;
   createdAt: string;
 }
 

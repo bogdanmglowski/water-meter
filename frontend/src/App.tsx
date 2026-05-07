@@ -2,16 +2,18 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  archiveAnomaly,
   deleteReaderImage,
   deleteReading,
   getAlerts,
-  getAnomalies,
+  getAnomaliesWithArchiveFilter,
   getConsumption,
   getCumulative,
   getDashboard,
   getReadings,
   getReaderGalleryPage,
   triggerManualRead,
+  unarchiveAnomaly,
 } from "./api";
 import { AnomaliesTable } from "./components/AnomaliesTable";
 import { AlertPanel } from "./components/AlertPanel";
@@ -20,6 +22,7 @@ import { EChart, type WaterMeterChartOption } from "./components/EChart";
 import { MetricCard } from "./components/MetricCard";
 import { ReadingsTable } from "./components/ReadingsTable";
 import type {
+  AnomalyItem,
   Bucket,
   RangePreset,
   ReaderGallerySection,
@@ -56,6 +59,8 @@ type AppPage =
   | "raw-readings"
   | "anomalies"
   | "reader-gallery";
+
+type AnomalyFilter = "active" | "archived" | "all";
 
 const pages = [
   {
@@ -248,13 +253,11 @@ export default function App() {
   const brandMarkUrl = `${import.meta.env.BASE_URL}brand-mark.svg`;
   const queryClient = useQueryClient();
   const [page, setPage] = useState<AppPage>(() => pageFromHash(window.location.hash));
-  const [preset, setPreset] = useState<RangePreset>("30d");
+  const [preset, setPreset] = useState<RangePreset>("24h");
   const [bucket, setBucket] = useState<Bucket>("day");
   const [rangeEnd, setRangeEnd] = useState(() => new Date());
   const [customRange, setCustomRange] = useState<AppliedRange | null>(null);
-  const [rangeInputs, setRangeInputs] = useState<RangeInputs>(() =>
-    rangeToInputs(buildRange("30d")),
-  );
+  const [rangeInputs, setRangeInputs] = useState<RangeInputs>(() => rangeToInputs(buildRange("24h")));
   const [isEditingRange, setIsEditingRange] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [readingsPage, setReadingsPage] = useState(1);
@@ -262,6 +265,8 @@ export default function App() {
   const [processedGalleryPage, setProcessedGalleryPage] = useState(1);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteImageError, setDeleteImageError] = useState<string | null>(null);
+  const [archiveAnomalyError, setArchiveAnomalyError] = useState<string | null>(null);
+  const [anomalyFilter, setAnomalyFilter] = useState<AnomalyFilter>("active");
   const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
   useEffect(() => {
@@ -440,8 +445,12 @@ export default function App() {
   });
 
   const anomaliesQuery = useQuery({
-    queryKey: ["anomalies", activeRange.from, activeRange.to],
-    queryFn: () => getAnomalies(activeRange),
+    queryKey: ["anomalies", activeRange.from, activeRange.to, anomalyFilter],
+    queryFn: () =>
+      getAnomaliesWithArchiveFilter({
+        ...activeRange,
+        includeArchived: anomalyFilter !== "active",
+      }),
     staleTime: 60_000,
     enabled: isAnomaliesPage,
   });
@@ -512,10 +521,33 @@ export default function App() {
     },
   });
 
+  const archiveAnomalyMutation = useMutation({
+    mutationFn: (id: number) => archiveAnomaly(id),
+    onSuccess: async () => {
+      setArchiveAnomalyError(null);
+      await queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+    },
+    onError: (error) => {
+      setArchiveAnomalyError(error instanceof Error ? error.message : "Archive request failed.");
+    },
+  });
+
+  const unarchiveAnomalyMutation = useMutation({
+    mutationFn: (id: number) => unarchiveAnomaly(id),
+    onSuccess: async () => {
+      setArchiveAnomalyError(null);
+      await queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+    },
+    onError: (error) => {
+      setArchiveAnomalyError(error instanceof Error ? error.message : "Unarchive request failed.");
+    },
+  });
+
   const manualReadMutation = useMutation({
     mutationFn: () => triggerManualRead(),
     onSuccess: async () => {
       setDeleteImageError(null);
+      setArchiveAnomalyError(null);
       setDeleteError(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
@@ -548,6 +580,12 @@ export default function App() {
   const dailyBaseline = rollingAverage(dailySeries, 7);
   const rawReadingsPage = readingsQuery.data;
   const rawReadings = rawReadingsPage?.items ?? [];
+  const anomalies = (anomaliesQuery.data ?? []).filter((anomaly) => {
+    if (anomalyFilter === "archived") {
+      return anomaly.archived;
+    }
+    return true;
+  });
   const totalReadingPages = rawReadingsPage?.totalPages ?? 1;
   const activeReadingsPage = rawReadingsPage?.page ?? readingsPage;
   const totalReadings = rawReadingsPage?.totalCount ?? 0;
@@ -585,6 +623,26 @@ export default function App() {
       category: image.kind,
       path: image.path,
     });
+  }
+
+  function handleArchiveAnomaly(anomaly: AnomalyItem) {
+    const shouldArchive = window.confirm(`Archive anomaly from ${formatTimestamp(anomaly.recordedAt)}?`);
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    archiveAnomalyMutation.mutate(anomaly.id);
+  }
+
+  function handleUnarchiveAnomaly(anomaly: AnomalyItem) {
+    const shouldUnarchive = window.confirm(`Restore anomaly from ${formatTimestamp(anomaly.recordedAt)} to active list?`);
+
+    if (!shouldUnarchive) {
+      return;
+    }
+
+    unarchiveAnomalyMutation.mutate(anomaly.id);
   }
 
   function handleDeleteCurrentCrop() {
@@ -833,7 +891,6 @@ export default function App() {
                   <h1>
                     Water <span>Meter</span>
                   </h1>
-                  <p>Usage analytics, anomalies, and reader imagery in one console.</p>
                 </div>
               </div>
             </div>
@@ -1055,10 +1112,43 @@ export default function App() {
                      the configured positive jump threshold after the full liter-precision register was interpreted.
                     </p>
                 </div>
-                <span className="count-pill">{anomaliesQuery.data?.length ?? 0}</span>
+                <span className="count-pill">{anomalies.length}</span>
               </div>
 
               {rangeControls}
+
+              <div className="control-group anomaly-filter">
+                <span className="range-field__label">Visibility</span>
+                <div className="segmented segmented--compact">
+                  <button
+                    type="button"
+                    className={anomalyFilter === "active" ? "is-active" : undefined}
+                    onClick={() => {
+                      setAnomalyFilter("active");
+                    }}
+                  >
+                    Active only
+                  </button>
+                  <button
+                    type="button"
+                    className={anomalyFilter === "archived" ? "is-active" : undefined}
+                    onClick={() => {
+                      setAnomalyFilter("archived");
+                    }}
+                  >
+                    Archived only
+                  </button>
+                  <button
+                    type="button"
+                    className={anomalyFilter === "all" ? "is-active" : undefined}
+                    onClick={() => {
+                      setAnomalyFilter("all");
+                    }}
+                  >
+                    All
+                  </button>
+                </div>
+              </div>
 
               <p className="range-meta">
                 Showing skipped anomaly rows for {activeRangeSummary}. Each row includes the
@@ -1066,7 +1156,26 @@ export default function App() {
               </p>
             </section>
 
-            <AnomaliesTable anomalies={anomaliesQuery.data ?? []} />
+            {archiveAnomalyError ? (
+              <section className="card error-card">
+                <strong>Anomaly archive request failed.</strong>
+                <p>{archiveAnomalyError}</p>
+              </section>
+            ) : null}
+
+            <AnomaliesTable
+              anomalies={anomalies}
+              showArchived={anomalyFilter !== "active"}
+              pendingAnomalyId={
+                archiveAnomalyMutation.isPending
+                  ? (archiveAnomalyMutation.variables ?? null)
+                  : unarchiveAnomalyMutation.isPending
+                    ? (unarchiveAnomalyMutation.variables ?? null)
+                    : null
+              }
+              onArchiveAnomaly={handleArchiveAnomaly}
+              onUnarchiveAnomaly={handleUnarchiveAnomaly}
+            />
           </>
         ) : isReaderGalleryPage ? (
           <>

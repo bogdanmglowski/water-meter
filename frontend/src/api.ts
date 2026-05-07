@@ -219,7 +219,35 @@ export function getAnomalies(range: RangeParams) {
   }).then((rows) => rows.map(normalizeAnomaly).filter(isPresent));
 }
 
-export function getReadings(range: RangeParams & { page: number; pageSize: number }) {
+export function getAnomaliesWithArchiveFilter(
+  range: RangeParams & { includeArchived?: boolean },
+) {
+  return request<RawAnomalyItem[]>("/api/anomalies", {
+    from: range.from,
+    to: range.to,
+    include_archived: range.includeArchived ? "true" : undefined,
+  }).then((rows) => rows.map(normalizeAnomaly).filter(isPresent));
+}
+
+export function archiveAnomaly(id: number) {
+  return request<{ id: number; archived: boolean }>(`/api/anomalies/${id}/archive`, undefined, {
+    method: "PATCH",
+  });
+}
+
+export function unarchiveAnomaly(id: number) {
+  return request<{ id: number; archived: boolean }>(
+    `/api/anomalies/${id}/unarchive`,
+    undefined,
+    {
+      method: "PATCH",
+    },
+  );
+}
+
+export function getReadings(
+  range: RangeParams & { page: number; pageSize: number },
+) {
   return request<RawReadingsPage>("/api/readings", {
     from: range.from,
     to: range.to,

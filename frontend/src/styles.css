@@ -751,6 +751,10 @@ a:focus-visible {
   margin-top: 0.25rem;
 }
 
+.anomaly-filter {
+  margin-top: 1rem;
+}
+
 .range-input-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1007,6 +1011,76 @@ a:focus-visible {
 .reading-delete-button:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.reading-archive-button {
+  padding: 0.62rem 0.8rem;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 8px;
+  background: rgba(168, 85, 247, 0.08);
+  color: var(--color-polar-white);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.reading-archive-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(168, 85, 247, 0.52);
+  background: rgba(168, 85, 247, 0.16);
+}
+
+.reading-archive-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.anomaly-evidence {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.anomaly-link {
+  color: var(--color-polar-white);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.anomaly-link:hover {
+  color: var(--color-virtual-violet);
+}
+
+.anomaly-muted,
+.anomaly-action-label {
+  color: var(--color-silver-text);
+  font-size: 0.85rem;
+}
+
+.anomaly-status {
+  width: fit-content;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.anomaly-status--active {
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  background: rgba(74, 222, 128, 0.1);
+  color: #bbf7d0;
+}
+
+.anomaly-status--archived {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(148, 163, 184, 0.1);
+  color: #cbd5e1;
 }
 
 .table-pagination {

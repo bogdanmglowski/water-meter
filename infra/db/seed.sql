@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS meter_reading_anomalies (
 CREATE INDEX IF NOT EXISTS idx_meter_reading_anomalies_recorded_at
     ON meter_reading_anomalies (recorded_at DESC, id DESC);
 
+ALTER TABLE IF EXISTS meter_reading_anomalies
+    ADD COLUMN IF NOT EXISTS image_path TEXT,
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
 TRUNCATE TABLE meter_readings RESTART IDENTITY;
 TRUNCATE TABLE meter_reading_anomalies RESTART IDENTITY;
 

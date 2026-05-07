@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::http::{HeaderValue, Method};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch};
 use axum::{Json, Router};
 use sqlx::PgPool;
 use std::path::PathBuf;
@@ -24,10 +24,10 @@ use crate::analytics::Bucket;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AlertDto, AnomalyDto, ConsumptionQuery, DashboardQuery, DashboardResponse,
-    DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse, RangeQuery, ReaderGalleryQuery,
-    ReaderGalleryResponse, ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery,
-    UsagePoint, ManualReadResponse,
+    AlertDto, AnomaliesQuery, AnomalyDto, ArchiveAnomalyResponse, ConsumptionQuery, DashboardQuery,
+    DashboardResponse, DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse,
+    ManualReadResponse, RangeQuery, ReaderGalleryQuery, ReaderGalleryResponse,
+    ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
 };
 use crate::reader_files::{build_gallery, delete_image, purge_old_images, resolve_image_path};
 
@@ -49,6 +49,8 @@ struct AppState {
         delete_reading,
         delete_reader_image,
         anomalies,
+        archive_anomaly,
+        unarchive_anomaly,
         cumulative_series,
         consumption_series,
         alerts,
@@ -65,6 +67,7 @@ struct AppState {
             DeleteReadingResponse,
             DeleteReaderImageResponse,
             AnomalyDto,
+            ArchiveAnomalyResponse,
             UsagePoint,
             AlertDto,
             DashboardResponse,
@@ -124,19 +127,27 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/readings", get(readings))
         .route("/api/readings/{id}", delete(delete_reading))
         .route("/api/anomalies", get(anomalies))
+        .route("/api/anomalies/{id}/archive", patch(archive_anomaly))
+        .route("/api/anomalies/{id}/unarchive", patch(unarchive_anomaly))
         .route("/api/series/cumulative", get(cumulative_series))
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
         .route("/api/reader/gallery", get(reader_gallery))
-        .route("/api/reader/manual-read", post(trigger_manual_read))
-        .route("/api/reader/images/{category}/{*path}", delete(delete_reader_image))
+        .route(
+            "/api/reader/manual-read",
+            axum::routing::post(trigger_manual_read),
+        )
+        .route(
+            "/api/reader/images/{category}/{*path}",
+            delete(delete_reader_image),
+        )
         .route("/api/reader/images/{category}/{*path}", get(reader_image))
         .route("/api/openapi.json", get(openapi))
         .with_state(state)
         .layer(
             CorsLayer::new()
                 .allow_origin(allowed_origin)
-                .allow_methods([Method::GET, Method::DELETE, Method::POST])
+                .allow_methods([Method::GET, Method::DELETE, Method::PATCH, Method::POST])
                 .allow_headers(Any),
         )
         .layer(TraceLayer::new_for_http());
@@ -249,13 +260,64 @@ async fn delete_reading(
 )]
 async fn anomalies(
     State(state): State<AppState>,
-    Query(query): Query<RangeQuery>,
+    Query(query): Query<AnomaliesQuery>,
 ) -> AppResult<Json<Vec<AnomalyDto>>> {
     let from = parse_optional_timestamp(query.from.as_deref())?;
     let to = parse_optional_timestamp(query.to.as_deref())?;
     validate_range(from, to)?;
-    let anomalies = db::fetch_anomalies(&state.pool, from, to).await?;
+    let anomalies = db::fetch_anomalies(
+        &state.pool,
+        from,
+        to,
+        query.include_archived.unwrap_or(false),
+    )
+    .await?;
     Ok(Json(analytics::build_anomalies(&anomalies)))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/anomalies/{id}/archive",
+    params(("id" = i64, Path, description = "Anomaly id")),
+    responses(
+        (status = 200, description = "Anomaly archived", body = ArchiveAnomalyResponse),
+        (status = 404, description = "Anomaly not found")
+    )
+)]
+async fn archive_anomaly(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ArchiveAnomalyResponse>> {
+    let archived = db::archive_anomaly(&state.pool, id).await?;
+    if archived.is_none() {
+        return Err(AppError::NotFound(format!("anomaly {id} was not found")));
+    }
+
+    Ok(Json(ArchiveAnomalyResponse { id, archived: true }))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/anomalies/{id}/unarchive",
+    params(("id" = i64, Path, description = "Anomaly id")),
+    responses(
+        (status = 200, description = "Anomaly unarchived", body = ArchiveAnomalyResponse),
+        (status = 404, description = "Anomaly not found")
+    )
+)]
+async fn unarchive_anomaly(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ArchiveAnomalyResponse>> {
+    let restored = db::unarchive_anomaly(&state.pool, id).await?;
+    if restored.is_none() {
+        return Err(AppError::NotFound(format!("anomaly {id} was not found")));
+    }
+
+    Ok(Json(ArchiveAnomalyResponse {
+        id,
+        archived: false,
+    }))
 }
 
 #[utoipa::path(
@@ -481,7 +543,11 @@ fn spawn_reader_image_cleanup(reader_runtime_dir: PathBuf, retention_days: u16) 
 
         loop {
             interval.tick().await;
-            if let Err(error) = purge_old_images(&reader_runtime_dir, OffsetDateTime::now_utc(), retention_days) {
+            if let Err(error) = purge_old_images(
+                &reader_runtime_dir,
+                OffsetDateTime::now_utc(),
+                retention_days,
+            ) {
                 tracing::warn!(?error, "failed to purge old reader images");
             }
         }
