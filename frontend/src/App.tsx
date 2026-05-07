@@ -11,6 +11,7 @@ import {
   getDashboard,
   getReadings,
   getReaderGalleryPage,
+  triggerManualRead,
 } from "./api";
 import { AnomaliesTable } from "./components/AnomaliesTable";
 import { AlertPanel } from "./components/AlertPanel";
@@ -18,7 +19,14 @@ import { ChartCard } from "./components/ChartCard";
 import { EChart, type WaterMeterChartOption } from "./components/EChart";
 import { MetricCard } from "./components/MetricCard";
 import { ReadingsTable } from "./components/ReadingsTable";
-import type { Bucket, RangePreset, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem, Reading } from "./types";
+import type {
+  Bucket,
+  RangePreset,
+  ReaderGallerySection,
+  ReaderImageDayGroup,
+  ReaderImageItem,
+  Reading,
+} from "./types";
 import {
   buildRange,
   formatBucketLabel,
@@ -504,6 +512,24 @@ export default function App() {
     },
   });
 
+  const manualReadMutation = useMutation({
+    mutationFn: () => triggerManualRead(),
+    onSuccess: async () => {
+      setDeleteImageError(null);
+      setDeleteError(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["readings"] }),
+        queryClient.invalidateQueries({ queryKey: ["anomalies"] }),
+        queryClient.invalidateQueries({ queryKey: ["cumulative"] }),
+        queryClient.invalidateQueries({ queryKey: ["consumption"] }),
+        queryClient.invalidateQueries({ queryKey: ["baseline"] }),
+        queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+        queryClient.invalidateQueries({ queryKey: ["reader-gallery"] }),
+      ]);
+    },
+  });
+
   const error = isDashboardPage
     ? dashboardQuery.error
     : isCumulativePage
@@ -789,8 +815,18 @@ export default function App() {
           <div className="topbar__main">
             <div className="brand-block">
               <div className="brand-block__identity">
-                <div className="brand-block__icon-shell" aria-hidden="true">
-                  <img src={brandMarkUrl} alt="" className="brand-block__icon" />
+                <div className="brand-block__lead">
+                  <div className="brand-block__icon-shell" aria-hidden="true">
+                    <img src={brandMarkUrl} alt="" className="brand-block__icon" />
+                  </div>
+                  <button
+                    type="button"
+                    className="manual-read-button"
+                    onClick={() => manualReadMutation.mutate()}
+                    disabled={manualReadMutation.isPending}
+                  >
+                    {manualReadMutation.isPending ? "Reading..." : "Take Reading"}
+                  </button>
                 </div>
                 <div className="brand-block__copy">
                   <span className="eyebrow">Live telemetry</span>
@@ -822,6 +858,17 @@ export default function App() {
           <section className="card error-card">
             <strong>API request failed.</strong>
             <p>{error.message}</p>
+          </section>
+        ) : null}
+
+        {manualReadMutation.error ? (
+          <section className="card error-card">
+            <strong>Manual read failed.</strong>
+            <p>
+              {manualReadMutation.error instanceof Error
+                ? manualReadMutation.error.message
+                : "Manual read request failed."}
+            </p>
           </section>
         ) : null}
 

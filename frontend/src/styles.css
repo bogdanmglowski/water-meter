@@ -190,6 +190,12 @@ a:focus-visible {
   gap: 1.15rem;
 }
 
+.brand-block__lead {
+  display: grid;
+  gap: 0.85rem;
+  justify-items: start;
+}
+
 .brand-block__icon-shell {
   width: clamp(74px, 10vw, 104px);
   aspect-ratio: 1;
@@ -211,6 +217,39 @@ a:focus-visible {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.manual-read-button {
+  min-height: 44px;
+  padding: 0.78rem 1rem;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(168, 85, 247, 0.16)),
+    rgba(10, 14, 24, 0.92);
+  color: var(--color-polar-white);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.manual-read-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.48);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.1);
+}
+
+.manual-read-button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .brand-block__copy {
@@ -1071,6 +1110,15 @@ a:focus-visible {
   .brand-block__identity {
     grid-template-columns: 1fr;
     align-items: flex-start;
+  }
+
+  .brand-block__lead {
+    width: 100%;
+  }
+
+  .manual-read-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .brand-block__icon-shell {

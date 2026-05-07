@@ -9,10 +9,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::http::{HeaderValue, Method};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use sqlx::PgPool;
 use std::path::PathBuf;
+use std::time::Duration as StdDuration;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -25,7 +26,8 @@ use crate::error::{AppError, AppResult};
 use crate::models::{
     AlertDto, AnomalyDto, ConsumptionQuery, DashboardQuery, DashboardResponse,
     DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse, RangeQuery, ReaderGalleryQuery,
-    ReaderGalleryResponse, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
+    ReaderGalleryResponse, ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery,
+    UsagePoint, ManualReadResponse,
 };
 use crate::reader_files::{build_gallery, delete_image, purge_old_images, resolve_image_path};
 
@@ -34,6 +36,8 @@ struct AppState {
     pool: PgPool,
     reader_runtime_dir: PathBuf,
     reader_image_retention_days: u16,
+    reader_control_url: String,
+    reader_control_client: reqwest::Client,
 }
 
 #[derive(OpenApi)]
@@ -49,6 +53,7 @@ struct AppState {
         consumption_series,
         alerts,
         reader_gallery,
+        trigger_manual_read,
         reader_image,
         openapi
     ),
@@ -64,6 +69,7 @@ struct AppState {
             AlertDto,
             DashboardResponse,
             ReaderGalleryResponse,
+            ManualReadResponse,
             crate::models::ReaderImageItem,
             crate::models::DashboardSummary,
             crate::models::AlertSeverity
@@ -102,6 +108,11 @@ async fn main() -> anyhow::Result<()> {
         pool,
         reader_runtime_dir: config.reader_runtime_dir,
         reader_image_retention_days: config.reader_image_retention_days,
+        reader_control_url: config.reader_control_url,
+        reader_control_client: reqwest::Client::builder()
+            .connect_timeout(StdDuration::from_secs(3))
+            .timeout(StdDuration::from_secs(120))
+            .build()?,
     };
     spawn_reader_image_cleanup(
         state.reader_runtime_dir.clone(),
@@ -117,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/series/consumption", get(consumption_series))
         .route("/api/alerts", get(alerts))
         .route("/api/reader/gallery", get(reader_gallery))
+        .route("/api/reader/manual-read", post(trigger_manual_read))
         .route("/api/reader/images/{category}/{*path}", delete(delete_reader_image))
         .route("/api/reader/images/{category}/{*path}", get(reader_image))
         .route("/api/openapi.json", get(openapi))
@@ -124,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(allowed_origin)
-                .allow_methods([Method::GET, Method::DELETE])
+                .allow_methods([Method::GET, Method::DELETE, Method::POST])
                 .allow_headers(Any),
         )
         .layer(TraceLayer::new_for_http());
@@ -318,6 +330,50 @@ async fn reader_gallery(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/reader/manual-read",
+    responses(
+        (status = 200, description = "Manual reader capture completed", body = ManualReadResponse),
+        (status = 500, description = "Manual reader capture failed")
+    )
+)]
+async fn trigger_manual_read(State(state): State<AppState>) -> AppResult<Json<ManualReadResponse>> {
+    let response = state
+        .reader_control_client
+        .post(&state.reader_control_url)
+        .send()
+        .await
+        .map_err(|error| {
+            AppError::Internal(format!("failed to reach reader control API: {error}"))
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "reader control API request failed".to_owned());
+        return Err(AppError::Internal(format!(
+            "reader manual read failed with status {status}: {body}"
+        )));
+    }
+
+    let payload = response
+        .json::<ReaderManualReadPayload>()
+        .await
+        .map_err(|error| {
+            AppError::Internal(format!("invalid reader control API response: {error}"))
+        })?;
+
+    Ok(Json(ManualReadResponse {
+        recorded_at: payload.recorded_at,
+        meter_value_m3: payload.meter_value_m3,
+        image_path: payload.image_path,
+        crop_path: payload.crop_path,
+    }))
+}
+
+#[utoipa::path(
     delete,
     path = "/api/reader/images/{category}/{path}",
     params(
@@ -452,5 +508,24 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_read_non_success_status_becomes_internal_error() {
+        let error = AppError::Internal(format!(
+            "reader manual read failed with status {}: {}",
+            reqwest::StatusCode::BAD_GATEWAY,
+            "upstream failed"
+        ));
+
+        assert_eq!(
+            error.to_string(),
+            "reader manual read failed with status 502 Bad Gateway: upstream failed"
+        );
     }
 }

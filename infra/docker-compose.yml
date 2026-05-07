@@ -47,6 +47,7 @@ services:
       APP_PORT: 8080
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:${CLIENT_PORT:-5173}}
       READER_RUNTIME_DIR: /reader-runtime
+      READER_CONTROL_URL: ${READER_CONTROL_URL:-http://reader:8090/manual-read}
       RUST_LOG: ${RUST_LOG:-info,tower_http=info}
     depends_on:
       seed:
@@ -89,6 +90,7 @@ services:
       READER_PROCESSED_PICTURES_DIR: /data/processed
       READER_PERSIST_EVERY: ${READER_PERSIST_EVERY:-1}
       READER_CROP_OUTPUT: ${READER_CROP_OUTPUT:-/data/meter-crop.png}
+      READER_CONTROL_BIND: ${READER_CONTROL_BIND:-0.0.0.0:8090}
       READER_X1: ${READER_X1:-159}
       READER_Y1: ${READER_Y1:-331}
       READER_X2: ${READER_X2:-565}
@@ -102,6 +104,8 @@ services:
       - ../reader/runtime:/data
     devices:
       - "${READER_VIDEO_DEVICE:-/dev/video0}:${READER_VIDEO_DEVICE:-/dev/video0}"
+    ports:
+      - "127.0.0.1:8090:8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

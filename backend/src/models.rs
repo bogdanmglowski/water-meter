@@ -221,6 +221,23 @@ pub struct ReaderGalleryResponse {
     pub processed_images: ReaderGallerySection,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualReadResponse {
+    pub recorded_at: String,
+    pub meter_value_m3: i64,
+    pub image_path: String,
+    pub crop_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReaderManualReadPayload {
+    pub recorded_at: String,
+    pub meter_value_m3: i64,
+    pub image_path: String,
+    pub crop_path: String,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -228,8 +245,8 @@ mod tests {
 
     use super::{
         AlertDto, AlertSeverity, AnomalyDto, DashboardResponse, DashboardSummary,
-        ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem,
-        ReadingDto, UsagePoint,
+        ManualReadResponse, ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup,
+        ReaderImageItem, ReadingDto, UsagePoint,
     };
 
     #[test]
@@ -351,5 +368,28 @@ mod tests {
             json!("2026-03-16T10:20:50Z")
         );
         assert_eq!(gallery_json["processedImages"]["dayGroups"], json!([]));
+    }
+
+    #[test]
+    fn manual_read_response_serializes_in_camel_case() {
+        let response = ManualReadResponse {
+            recorded_at: "2026-03-16T10:20:50Z".to_owned(),
+            meter_value_m3: 12345,
+            image_path: "2026-03-16/2026-03-16_10-20-50.jpg".to_owned(),
+            crop_path: "2026-03-16/2026-03-16_10-20-50.jpg".to_owned(),
+        };
+
+        let response_json = serde_json::to_value(response).expect("manual read serializes");
+
+        assert_eq!(response_json["recordedAt"], json!("2026-03-16T10:20:50Z"));
+        assert_eq!(response_json["meterValueM3"], json!(12345));
+        assert_eq!(
+            response_json["imagePath"],
+            json!("2026-03-16/2026-03-16_10-20-50.jpg")
+        );
+        assert_eq!(
+            response_json["cropPath"],
+            json!("2026-03-16/2026-03-16_10-20-50.jpg")
+        );
     }
 }

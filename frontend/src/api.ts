@@ -3,6 +3,7 @@ import type {
   AnomalyItem,
   Bucket,
   DashboardResponse,
+  ManualReadResult,
   ReaderGallery,
   ReaderGallerySection,
   ReaderImageItem,
@@ -45,6 +46,7 @@ type RawReaderGallery = Omit<ReaderGallery, "currentCropUrl" | "originalImages" 
   originalImages: RawReaderGallerySection;
   processedImages: RawReaderGallerySection;
 };
+type RawManualReadResult = Omit<ManualReadResult, "recordedAt"> & { recordedAt: unknown };
 
 interface RangeParams {
   from: string;
@@ -268,4 +270,13 @@ export function deleteReaderImage(category: string, path: string) {
       method: "DELETE",
     },
   );
+}
+
+export function triggerManualRead() {
+  return request<RawManualReadResult>("/api/reader/manual-read", undefined, {
+    method: "POST",
+  }).then((result) => ({
+    ...result,
+    recordedAt: toIsoTimestamp(result.recordedAt) ?? "",
+  }));
 }

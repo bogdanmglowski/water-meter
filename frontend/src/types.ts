@@ -90,3 +90,10 @@ export interface ReaderGallery {
   originalImages: ReaderGallerySection;
   processedImages: ReaderGallerySection;
 }
+
+export interface ManualReadResult {
+  recordedAt: string;
+  meterValueM3: number;
+  imagePath: string;
+  cropPath: string;
+}

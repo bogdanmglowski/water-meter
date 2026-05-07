@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 import re
+import threading
 import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +65,14 @@ class PostgresTarget:
     database_url: str
     source: str
     anomaly_threshold: int
+
+
+@dataclass(frozen=True)
+class ManualReadResult:
+    recorded_at: datetime
+    meter_value_m3: int
+    image_path: Path
+    crop_path: Path
 
 
 HELP_EPILOG = """Examples:
@@ -430,6 +442,114 @@ def run_capture_cycle(
     return image_path, value, ts
 
 
+def run_manual_read(
+    camera: cv2.VideoCapture,
+    pictures_root: Path,
+    *,
+    crop_rect: CropRect,
+    crop_output_path: Path,
+    processed_pictures_root: Path,
+    postgres_writer: PostgresWriter | None = None,
+    ocr_append_digit: int | None = None,
+    capture_lock: threading.Lock | None = None,
+) -> ManualReadResult:
+    lock_context = capture_lock if capture_lock is not None else contextlib.nullcontext()
+    with lock_context:
+        image_path, value, ts = run_capture_cycle(
+            camera,
+            pictures_root,
+            timestamp=None,
+            crop_rect=crop_rect,
+            persist_image=True,
+            crop_output_path=crop_output_path,
+            processed_pictures_root=processed_pictures_root,
+            postgres_writer=postgres_writer,
+            **({"ocr_append_digit": ocr_append_digit} if ocr_append_digit is not None else {}),
+        )
+
+    if image_path is None:
+        raise RuntimeError("Manual read did not persist the original image")
+
+    crop_path = processed_pictures_root / ts.strftime("%Y-%m-%d") / f"{ts.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
+    return ManualReadResult(
+        recorded_at=ts,
+        meter_value_m3=value,
+        image_path=image_path,
+        crop_path=crop_path,
+    )
+
+
+def format_api_timestamp(timestamp: datetime) -> str:
+    return normalize_postgres_timestamp(timestamp).isoformat().replace("+00:00", "Z")
+
+
+def manual_read_payload(result: ManualReadResult) -> dict[str, object]:
+    return {
+        "recorded_at": format_api_timestamp(result.recorded_at),
+        "meter_value_m3": result.meter_value_m3,
+        "image_path": result.image_path.as_posix(),
+        "crop_path": result.crop_path.as_posix(),
+    }
+
+
+def parse_control_bind(value: str | None, parser: argparse.ArgumentParser) -> tuple[str, int] | None:
+    if value is None:
+        return None
+
+    bind = value.strip()
+    if not bind:
+        parser.error("--control-bind must not be empty")
+
+    host, separator, port_text = bind.rpartition(":")
+    if not separator or not host or not port_text:
+        parser.error("--control-bind must use HOST:PORT")
+
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        parser.error(f"invalid control port: {exc}")
+
+    if port <= 0 or port > 65535:
+        parser.error("--control-bind port must be between 1 and 65535")
+
+    return host, port
+
+
+def start_control_server(
+    bind_address: tuple[str, int],
+    trigger_manual_read,
+) -> tuple[ThreadingHTTPServer, threading.Thread]:
+    class ReaderControlHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/manual-read":
+                self._write_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                return
+
+            try:
+                result = trigger_manual_read()
+            except Exception as exc:  # noqa: BLE001
+                self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+                return
+
+            self._write_json(HTTPStatus.OK, manual_read_payload(result))
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+        def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(bind_address, ReaderControlHandler)
+    thread = threading.Thread(target=server.serve_forever, name="reader-control", daemon=True)
+    thread.start()
+    return server, thread
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Capture images from a USB camera, crop a rectangle, OCR it with Ollama, and optionally store the reading in PostgreSQL.",
@@ -484,6 +604,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=range(10),
         default=None,
         help="Append one trailing digit to the OCR reading before logging and storing it. Leave unset to keep the OCR value unchanged.",
+    )
+    parser.add_argument(
+        "--manual-read",
+        action="store_true",
+        help="Run exactly one capture cycle immediately, always persisting both original and processed images.",
+    )
+    parser.add_argument(
+        "--control-bind",
+        help="Expose a local HTTP control endpoint on HOST:PORT with POST /manual-read.",
     )
 
     parser.add_argument("--x1", type=int, help="Left X coordinate of the crop rectangle.")
@@ -573,6 +702,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Crop coordinates are required: provide --x1, --y1, --x2, and --y2")
     crop_output_path = parse_crop_output(args, crop_rect, parser)
     postgres_target = parse_postgres_target(args, parser)
+    control_bind = parse_control_bind(args.control_bind, parser)
 
     if args.interval_seconds <= 0:
         parser.error("--interval-seconds must be greater than 0")
@@ -603,6 +733,23 @@ def main(argv: list[str] | None = None) -> int:
             camera.release()
             return 1
 
+    capture_lock = threading.Lock()
+
+    def trigger_manual_read() -> ManualReadResult:
+        return run_manual_read(
+            camera,
+            args.pictures_dir,
+            crop_rect=crop_rect,
+            crop_output_path=crop_output_path,
+            processed_pictures_root=args.processed_pictures_dir,
+            postgres_writer=postgres_writer,
+            ocr_append_digit=args.ocr_append_digit,
+            capture_lock=capture_lock,
+        )
+
+    control_server: ThreadingHTTPServer | None = None
+    control_thread: threading.Thread | None = None
+
     print(
         "Starting capture loop "
         f"(source=usb(index={args.camera_index}), interval={args.interval_seconds}s, "
@@ -612,24 +759,38 @@ def main(argv: list[str] | None = None) -> int:
 
     capture_count = 0
     try:
+        if args.manual_read:
+            result = trigger_manual_read()
+            stamp = result.recorded_at.strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[{stamp}] manual read complete saved={result.image_path} "
+                f"crop={result.crop_path} value={result.meter_value_m3}"
+            )
+            return 0
+
+        if control_bind is not None:
+            control_server, control_thread = start_control_server(control_bind, trigger_manual_read)
+            print(f"Reader control API listening on http://{control_bind[0]}:{control_bind[1]}/manual-read")
+
         while True:
             try:
                 persist_image = capture_count % args.persist_every == 0
-                image_path, value, ts = run_capture_cycle(
-                    camera,
-                    args.pictures_dir,
-                    timestamp=None,
-                    crop_rect=crop_rect,
-                    persist_image=persist_image,
-                    crop_output_path=crop_output_path,
-                    processed_pictures_root=args.processed_pictures_dir,
-                    postgres_writer=postgres_writer,
-                    **(
-                        {"ocr_append_digit": args.ocr_append_digit}
-                        if args.ocr_append_digit is not None
-                        else {}
-                    ),
-                )
+                with capture_lock:
+                    image_path, value, ts = run_capture_cycle(
+                        camera,
+                        args.pictures_dir,
+                        timestamp=None,
+                        crop_rect=crop_rect,
+                        persist_image=persist_image,
+                        crop_output_path=crop_output_path,
+                        processed_pictures_root=args.processed_pictures_dir,
+                        postgres_writer=postgres_writer,
+                        **(
+                            {"ocr_append_digit": args.ocr_append_digit}
+                            if args.ocr_append_digit is not None
+                            else {}
+                        ),
+                    )
                 capture_count += 1
                 stamp = ts.strftime("%Y-%m-%d %H:%M:%S")
                 saved_label = image_path if image_path is not None else "<skipped>"
@@ -642,6 +803,11 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("Stopping capture loop.")
     finally:
+        if control_server is not None:
+            control_server.shutdown()
+            control_server.server_close()
+        if control_thread is not None:
+            control_thread.join(timeout=5)
         camera.release()
         if postgres_writer is not None:
             postgres_writer.close()

@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app
-from app import CropRect, PostgresTarget, PostgresWriter, build_arg_parser, crop_image, normalize_ocr_text, parse_crop_output, parse_crop_rect, parse_postgres_target, run_capture_cycle, run_ollama_ocr
+from app import CropRect, ManualReadResult, PostgresTarget, PostgresWriter, build_arg_parser, crop_image, manual_read_payload, normalize_ocr_text, parse_crop_output, parse_crop_rect, parse_postgres_target, run_capture_cycle, run_ollama_ocr
 
 
 class FakeCamera:
@@ -970,3 +970,94 @@ def test_main_initializes_postgres_writer_when_enabled(
 
     out = capsys.readouterr().out
     assert "postgres=enabled(source=camera-reader)" in out
+
+
+def test_manual_read_argument_is_parsed() -> None:
+    args = build_arg_parser().parse_args(["--manual-read"])
+
+    assert args.manual_read is True
+
+
+def test_manual_read_payload_uses_expected_contract() -> None:
+    payload = manual_read_payload(
+        ManualReadResult(
+            recorded_at=datetime(2026, 3, 16, 10, 20, 50, tzinfo=timezone.utc),
+            meter_value_m3=12345,
+            image_path=Path("pictures/2026-03-16/2026-03-16_10-20-50.jpg"),
+            crop_path=Path("processed/2026-03-16/2026-03-16_10-20-50.jpg"),
+        )
+    )
+
+    assert payload == {
+        "recorded_at": "2026-03-16T10:20:50Z",
+        "meter_value_m3": 12345,
+        "image_path": "pictures/2026-03-16/2026-03-16_10-20-50.jpg",
+        "crop_path": "processed/2026-03-16/2026-03-16_10-20-50.jpg",
+    }
+
+
+def test_main_manual_read_forces_image_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    capture_calls: dict[str, object] = {}
+
+    class FakeOpenedCamera:
+        def release(self) -> None:
+            capture_calls["released"] = True
+
+    def fake_run_capture_cycle(
+        camera: object,
+        pictures_root: Path,
+        *,
+        timestamp: datetime | None = None,
+        crop_rect: CropRect | None = None,
+        persist_image: bool = True,
+        crop_output_path: Path | None = None,
+        processed_pictures_root: Path | None = None,
+        postgres_writer: object | None = None,
+        ocr_append_digit: int | None = None,
+    ) -> tuple[Path | None, int, datetime]:
+        capture_calls["camera"] = camera
+        capture_calls["crop_rect"] = crop_rect
+        capture_calls["persist_image"] = persist_image
+        capture_calls["crop_output_path"] = crop_output_path
+        capture_calls["processed_pictures_root"] = processed_pictures_root
+        capture_calls["postgres_writer"] = postgres_writer
+        capture_calls["ocr_append_digit"] = ocr_append_digit
+        return pictures_root / "2026-03-30" / "2026-03-30_18-00-00.jpg", 45678, datetime(2026, 3, 30, 18, 0, 0)
+
+    monkeypatch.setattr(app, "open_camera", lambda _camera_index: FakeOpenedCamera())
+    monkeypatch.setattr(app, "run_capture_cycle", fake_run_capture_cycle)
+
+    exit_code = app.main(
+        [
+            "--manual-read",
+            "--persist-every",
+            "50",
+            "--pictures-dir",
+            str(tmp_path / "pictures"),
+            "--processed-pictures-dir",
+            str(tmp_path / "processed"),
+            "--x1",
+            "1",
+            "--y1",
+            "2",
+            "--x2",
+            "8",
+            "--y2",
+            "9",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capture_calls["crop_rect"] == CropRect(1, 2, 8, 9)
+    assert capture_calls["persist_image"] is True
+    assert capture_calls["crop_output_path"] == Path("meter-crop.png")
+    assert capture_calls["processed_pictures_root"] == tmp_path / "processed"
+    assert capture_calls["released"] is True
+
+    out = capsys.readouterr().out
+    assert "manual read complete" in out
+    assert "value=45678" in out

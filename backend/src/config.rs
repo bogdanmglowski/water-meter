@@ -9,12 +9,14 @@ pub struct Config {
     pub client_origin: String,
     pub reader_runtime_dir: PathBuf,
     pub reader_image_retention_days: u16,
+    pub reader_control_url: String,
 }
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://water-meter:water-meter@localhost:5432/water_meter".to_owned());
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://water-meter:water-meter@localhost:5432/water_meter".to_owned()
+        });
         let host = env::var("APP_HOST")
             .ok()
             .and_then(|value| value.parse::<IpAddr>().ok())
@@ -33,12 +35,15 @@ impl Config {
             .and_then(|value| value.parse::<u16>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(30);
+        let reader_control_url = env::var("READER_CONTROL_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8090/manual-read".to_owned());
         Ok(Self {
             database_url,
             bind_addr: SocketAddr::new(host, port),
             client_origin,
             reader_runtime_dir,
             reader_image_retention_days,
+            reader_control_url,
         })
     }
 }
