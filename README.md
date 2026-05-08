@@ -260,6 +260,7 @@ Reader profile notes:
 - `READER_OCR_APPEND_DIGIT` appends one trailing digit before insert, useful when the physical meter omits the final liter digit
 - `READER_PG_ANOMALY_THRESHOLD` skips unusually large positive jumps and stores them in `meter_reading_anomalies` instead of `meter_readings`
 - crop coordinates are required
+- `READER_CONTROL_BIND` controls where the reader listens inside its container, while `READER_CONTROL_PUBLISH` controls the host address and port published by Docker
 - the backend can expose the current crop plus archived original and processed reader images from `READER_RUNTIME_DIR`
 - the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`
 - host Ollama must listen on an address reachable from Docker

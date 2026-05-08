@@ -105,7 +105,7 @@ services:
     devices:
       - "${READER_VIDEO_DEVICE:-/dev/video0}:${READER_VIDEO_DEVICE:-/dev/video0}"
     ports:
-      - "127.0.0.1:8090:8090"
+      - "${READER_CONTROL_PUBLISH:-127.0.0.1:8090}:8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
