@@ -31,3 +31,6 @@ Thumbs.db
 /reader/pictures/
 /reader/readings.csv
 
+# other
+scripts/copy-project-to-host.sh
+
