@@ -104,6 +104,31 @@ pub fn build_readings_page(readings: &[DbReading], page: ReadingsPage) -> Readin
     }
 }
 
+pub fn select_negative_delta_context_rows(
+    readings: &[DbReading],
+    context_size: usize,
+) -> Vec<DbReading> {
+    let mut included = vec![false; readings.len()];
+
+    for (index, reading) in readings.iter().enumerate() {
+        if !reading.delta_m3.is_some_and(|delta| delta < 0) {
+            continue;
+        }
+
+        let start = index.saturating_sub(context_size);
+        let end = (index + context_size + 1).min(readings.len());
+        for include in &mut included[start..end] {
+            *include = true;
+        }
+    }
+
+    readings
+        .iter()
+        .zip(included)
+        .filter_map(|(reading, include)| include.then_some(reading.clone()))
+        .collect()
+}
+
 pub fn build_dashboard(
     readings: &[DbReading],
     now: OffsetDateTime,
@@ -727,6 +752,54 @@ mod tests {
         );
 
         assert!(alerts.iter().any(|alert| alert.kind == "negative_delta"));
+    }
+
+    #[test]
+    fn negative_delta_context_rows_include_three_before_and_after() {
+        let readings = vec![
+            reading_with_delta(datetime!(2026-04-12 00:00 UTC), 10_000, None),
+            reading_with_delta(datetime!(2026-04-12 01:00 UTC), 11_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 02:00 UTC), 12_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 03:00 UTC), 13_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 04:00 UTC), 9_000, Some(-4_000)),
+            reading_with_delta(datetime!(2026-04-12 05:00 UTC), 10_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 06:00 UTC), 11_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 07:00 UTC), 12_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 08:00 UTC), 13_000, Some(1_000)),
+        ];
+
+        let selected = select_negative_delta_context_rows(&readings, 3);
+
+        assert_eq!(selected.iter().map(|reading| reading.id).collect::<Vec<_>>(), vec![
+            datetime!(2026-04-12 01:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 02:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 03:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 04:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 05:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 06:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 07:00 UTC).unix_timestamp(),
+        ]);
+    }
+
+    #[test]
+    fn negative_delta_context_rows_merge_overlapping_windows() {
+        let readings = vec![
+            reading_with_delta(datetime!(2026-04-12 00:00 UTC), 10_000, None),
+            reading_with_delta(datetime!(2026-04-12 01:00 UTC), 11_000, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 02:00 UTC), 9_000, Some(-2_000)),
+            reading_with_delta(datetime!(2026-04-12 03:00 UTC), 8_500, Some(-500)),
+            reading_with_delta(datetime!(2026-04-12 04:00 UTC), 9_500, Some(1_000)),
+            reading_with_delta(datetime!(2026-04-12 05:00 UTC), 10_500, Some(1_000)),
+        ];
+
+        let selected = select_negative_delta_context_rows(&readings, 1);
+
+        assert_eq!(selected.iter().map(|reading| reading.id).collect::<Vec<_>>(), vec![
+            datetime!(2026-04-12 01:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 02:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 03:00 UTC).unix_timestamp(),
+            datetime!(2026-04-12 04:00 UTC).unix_timestamp(),
+        ]);
     }
 
     #[test]

@@ -246,13 +246,14 @@ export function unarchiveAnomaly(id: number) {
 }
 
 export function getReadings(
-  range: RangeParams & { page: number; pageSize: number },
+  range: RangeParams & { page: number; pageSize: number; negativeDeltasOnly?: boolean },
 ) {
   return request<RawReadingsPage>("/api/readings", {
     from: range.from,
     to: range.to,
     page: range.page,
     page_size: range.pageSize,
+    negative_deltas_only: range.negativeDeltasOnly ? "true" : undefined,
   }).then(normalizeReadingsPage);
 }
 

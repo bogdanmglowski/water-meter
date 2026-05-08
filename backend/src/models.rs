@@ -187,6 +187,7 @@ pub struct ReadingsQuery {
     pub to: Option<String>,
     pub page: Option<usize>,
     pub page_size: Option<usize>,
+    pub negative_deltas_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

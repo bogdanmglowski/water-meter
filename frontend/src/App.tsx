@@ -61,6 +61,7 @@ type AppPage =
   | "reader-gallery";
 
 type AnomalyFilter = "active" | "archived" | "all";
+type ReadingsFilter = "all" | "negative-deltas-only";
 
 const pages = [
   {
@@ -267,6 +268,7 @@ export default function App() {
   const [deleteImageError, setDeleteImageError] = useState<string | null>(null);
   const [archiveAnomalyError, setArchiveAnomalyError] = useState<string | null>(null);
   const [anomalyFilter, setAnomalyFilter] = useState<AnomalyFilter>("active");
+  const [readingsFilter, setReadingsFilter] = useState<ReadingsFilter>("all");
   const activeRange = customRange ?? buildRange(preset, rangeEnd);
 
   useEffect(() => {
@@ -300,7 +302,7 @@ export default function App() {
 
   useEffect(() => {
     setReadingsPage(1);
-  }, [page, preset]);
+  }, [page, preset, readingsFilter]);
 
   function handlePresetChange(nextPreset: RangePreset) {
     const nextEnd = new Date();
@@ -456,12 +458,20 @@ export default function App() {
   });
 
   const readingsQuery = useQuery({
-    queryKey: ["readings", activeRange.from, activeRange.to, readingsPage, readingsPerPage],
+    queryKey: [
+      "readings",
+      activeRange.from,
+      activeRange.to,
+      readingsPage,
+      readingsPerPage,
+      readingsFilter,
+    ],
     queryFn: () =>
       getReadings({
         ...activeRange,
         page: readingsPage,
         pageSize: readingsPerPage,
+        negativeDeltasOnly: readingsFilter === "negative-deltas-only",
       }),
     staleTime: 60_000,
     enabled: page === "raw-readings",
@@ -1352,9 +1362,34 @@ export default function App() {
 
               {rangeControls}
 
+              <div className="control-group anomaly-filter">
+                <span className="range-field__label">Filter</span>
+                <div className="segmented segmented--compact">
+                  <button
+                    type="button"
+                    className={readingsFilter === "all" ? "is-active" : undefined}
+                    onClick={() => {
+                      setReadingsFilter("all");
+                    }}
+                  >
+                    All readings
+                  </button>
+                  <button
+                    type="button"
+                    className={readingsFilter === "negative-deltas-only" ? "is-active" : undefined}
+                    onClick={() => {
+                      setReadingsFilter("negative-deltas-only");
+                    }}
+                  >
+                    Negative deltas only
+                  </button>
+                </div>
+              </div>
+
               <p className="range-meta">
-                Server pagination is active for {activeRangeSummary}. The delta column shows usage
-                between each row and the immediately previous reading.
+                {readingsFilter === "negative-deltas-only"
+                  ? `Showing negative-delta readings for ${activeRangeSummary}, plus three rows before and after each match.`
+                  : `Server pagination is active for ${activeRangeSummary}. The delta column shows usage between each row and the immediately previous reading.`}
               </p>
             </section>
 

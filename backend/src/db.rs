@@ -80,6 +80,101 @@ pub async fn count_readings(
     .await
 }
 
+pub async fn count_negative_delta_context_readings(
+    executor: impl PgExecutor<'_>,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+    context_size: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        WITH ordered AS (
+            SELECT
+                id,
+                recorded_at,
+                ROW_NUMBER() OVER (ORDER BY recorded_at ASC, id ASC) AS row_num,
+                meter_value_m3 - LAG(meter_value_m3) OVER (ORDER BY recorded_at ASC, id ASC) AS delta_m3
+            FROM meter_readings
+        ),
+        negative_rows AS (
+            SELECT row_num
+            FROM ordered
+            WHERE recorded_at >= $1
+              AND recorded_at <= $2
+              AND delta_m3 < 0
+        ),
+        context_rows AS (
+            SELECT DISTINCT ordered.id
+            FROM ordered
+            JOIN negative_rows
+              ON ordered.row_num BETWEEN negative_rows.row_num - $3 AND negative_rows.row_num + $3
+        )
+        SELECT COUNT(*)
+        FROM context_rows
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .bind(context_size)
+    .fetch_one(executor)
+    .await
+}
+
+pub async fn fetch_negative_delta_context_readings(
+    executor: impl PgExecutor<'_>,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+    context_size: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<DbReading>, sqlx::Error> {
+    sqlx::query_as::<_, DbReading>(
+        r#"
+        WITH ordered AS (
+            SELECT
+                id,
+                recorded_at,
+                meter_value_m3,
+                source,
+                ROW_NUMBER() OVER (ORDER BY recorded_at ASC, id ASC) AS row_num,
+                meter_value_m3 - LAG(meter_value_m3) OVER (ORDER BY recorded_at ASC, id ASC) AS delta_m3
+            FROM meter_readings
+        ),
+        negative_rows AS (
+            SELECT row_num
+            FROM ordered
+            WHERE recorded_at >= $1
+              AND recorded_at <= $2
+              AND delta_m3 < 0
+        ),
+        context_rows AS (
+            SELECT DISTINCT ordered.row_num
+            FROM ordered
+            JOIN negative_rows
+              ON ordered.row_num BETWEEN negative_rows.row_num - $3 AND negative_rows.row_num + $3
+        ),
+        paged_rows AS (
+            SELECT ordered.id, ordered.recorded_at, ordered.meter_value_m3, ordered.delta_m3, ordered.source
+            FROM ordered
+            JOIN context_rows ON context_rows.row_num = ordered.row_num
+            ORDER BY ordered.recorded_at ASC, ordered.id ASC
+            OFFSET $4
+            LIMIT $5
+        )
+        SELECT id, recorded_at, meter_value_m3, delta_m3, source
+        FROM paged_rows
+        ORDER BY recorded_at ASC, id ASC
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .bind(context_size)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(executor)
+    .await
+}
+
 pub async fn delete_reading(pool: &PgPool, id: i64) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         r#"

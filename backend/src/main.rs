@@ -213,6 +213,34 @@ async fn readings(
     validate_range(from, to)?;
     let requested_page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(30).clamp(1, 200);
+    let negative_deltas_only = query.negative_deltas_only.unwrap_or(false);
+
+    if negative_deltas_only {
+        let (from, to) = resolve_range(query.from.as_deref(), query.to.as_deref(), 30)?;
+        let context_size = 3_i64;
+        let mut transaction = state.pool.begin().await?;
+        let total_count = usize::try_from(
+            db::count_negative_delta_context_readings(&mut *transaction, from, to, context_size)
+                .await?,
+        )
+        .map_err(|_| AppError::Internal("readings count overflow".to_owned()))?;
+        let page = analytics::resolve_readings_page(requested_page, page_size, total_count);
+        let page_rows = db::fetch_negative_delta_context_readings(
+            &mut *transaction,
+            from,
+            to,
+            context_size,
+            i64::try_from(page.offset)
+                .map_err(|_| AppError::Internal("readings offset overflow".to_owned()))?,
+            i64::try_from(page.limit)
+                .map_err(|_| AppError::Internal("page size overflow".to_owned()))?,
+        )
+        .await?;
+        transaction.commit().await?;
+
+        return Ok(Json(analytics::build_readings_page(&page_rows, page)));
+    }
+
     let mut transaction = state.pool.begin().await?;
     let total_count = usize::try_from(db::count_readings(&mut *transaction, from, to).await?)
         .map_err(|_| AppError::Internal("readings count overflow".to_owned()))?;
