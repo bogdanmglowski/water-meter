@@ -218,6 +218,18 @@ class PostgresWriter:
         previous_recorded_at, previous_value = row
         return previous_recorded_at, int(previous_value)
 
+    def _fetch_raw_max_value(self, cursor: Any) -> int | None:
+        cursor.execute(
+            """
+            SELECT MAX(meter_value_m3)
+            FROM meter_readings
+            """
+        )
+        row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
     def _persist_anomaly(
         self,
         cursor: Any,
@@ -304,10 +316,15 @@ class PostgresWriter:
         try:
             with connection.cursor() as cursor:
                 previous = self._fetch_previous_reading(cursor, recorded_at)
+                raw_max_value = self._fetch_raw_max_value(cursor)
                 if previous is not None:
                     previous_recorded_at, previous_value = previous
                     delta = value - previous_value
-                    if delta < 0 or delta > self.target.anomaly_threshold:
+                    if (
+                        delta < 0
+                        or delta > self.target.anomaly_threshold
+                        or (raw_max_value is not None and value < raw_max_value)
+                    ):
                         self._persist_anomaly(
                             cursor,
                             recorded_at=recorded_at,
@@ -316,6 +333,16 @@ class PostgresWriter:
                             previous_value=previous_value,
                         )
                         return
+
+                if previous is None and raw_max_value is not None and value < raw_max_value:
+                    self._persist_anomaly(
+                        cursor,
+                        recorded_at=recorded_at,
+                        value=value,
+                        previous_recorded_at=recorded_at,
+                        previous_value=raw_max_value,
+                    )
+                    return
 
                 cursor.execute(
                     """

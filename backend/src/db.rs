@@ -244,6 +244,15 @@ pub async fn add_anomaly_to_raw_readings(pool: &PgPool, id: i64) -> AppResult<Op
         return Ok(None);
     };
 
+    let historical_max = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT MAX(meter_value_m3)
+        FROM meter_readings
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+
     let previous_value = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT meter_value_m3
@@ -270,9 +279,14 @@ pub async fn add_anomaly_to_raw_readings(pool: &PgPool, id: i64) -> AppResult<Op
     .fetch_optional(pool)
     .await?;
 
-    if !raw_reading_fits_monotonic_sequence(previous_value, meter_value_m3, next_value) {
+    if !raw_reading_fits_monotonic_sequence(
+        historical_max,
+        previous_value,
+        meter_value_m3,
+        next_value,
+    ) {
         return Err(AppError::BadRequest(
-            "raw readings must stay non-decreasing; this anomaly remains archived-only"
+            "raw readings must never go below the current maximum; this anomaly remains archived-only"
                 .to_owned(),
         ));
     }
@@ -297,10 +311,15 @@ pub async fn add_anomaly_to_raw_readings(pool: &PgPool, id: i64) -> AppResult<Op
 }
 
 fn raw_reading_fits_monotonic_sequence(
+    historical_max: Option<i64>,
     previous_value: Option<i64>,
     candidate_value: i64,
     next_value: Option<i64>,
 ) -> bool {
+    if historical_max.is_some_and(|max_value| candidate_value < max_value) {
+        return false;
+    }
+
     if previous_value.is_some_and(|previous| candidate_value < previous) {
         return false;
     }
@@ -405,16 +424,41 @@ mod tests {
 
     #[test]
     fn raw_reading_rejects_value_smaller_than_previous() {
-        assert!(!raw_reading_fits_monotonic_sequence(Some(1_205), 995, None));
+        assert!(!raw_reading_fits_monotonic_sequence(
+            Some(1_205),
+            Some(1_205),
+            995,
+            None,
+        ));
     }
 
     #[test]
     fn raw_reading_rejects_value_larger_than_next() {
-        assert!(!raw_reading_fits_monotonic_sequence(None, 1_205, Some(1_100)));
+        assert!(!raw_reading_fits_monotonic_sequence(
+            Some(1_205),
+            None,
+            1_205,
+            Some(1_100),
+        ));
     }
 
     #[test]
     fn raw_reading_accepts_value_between_neighbors() {
-        assert!(raw_reading_fits_monotonic_sequence(Some(1_000), 1_050, Some(1_100)));
+        assert!(raw_reading_fits_monotonic_sequence(
+            Some(1_050),
+            Some(1_000),
+            1_050,
+            Some(1_100),
+        ));
+    }
+
+    #[test]
+    fn raw_reading_rejects_value_smaller_than_existing_historical_max() {
+        assert!(!raw_reading_fits_monotonic_sequence(
+            Some(1_300),
+            Some(1_000),
+            1_100,
+            Some(1_200),
+        ));
     }
 }
