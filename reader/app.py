@@ -306,7 +306,8 @@ class PostgresWriter:
                 previous = self._fetch_previous_reading(cursor, recorded_at)
                 if previous is not None:
                     previous_recorded_at, previous_value = previous
-                    if value - previous_value > self.target.anomaly_threshold:
+                    delta = value - previous_value
+                    if delta < 0 or delta > self.target.anomaly_threshold:
                         self._persist_anomaly(
                             cursor,
                             recorded_at=recorded_at,

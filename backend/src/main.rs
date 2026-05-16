@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::http::{HeaderValue, Method};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, patch};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use sqlx::PgPool;
 use std::path::PathBuf;
@@ -24,10 +24,11 @@ use crate::analytics::Bucket;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AlertDto, AnomaliesQuery, AnomalyDto, ArchiveAnomalyResponse, ConsumptionQuery, DashboardQuery,
-    DashboardResponse, DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse,
-    ManualReadResponse, RangeQuery, ReaderGalleryQuery, ReaderGalleryResponse,
-    ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery, UsagePoint,
+    AddAnomalyToRawReadingResponse, AlertDto, AnomaliesQuery, AnomalyDto, ArchiveAnomalyResponse,
+    ConsumptionQuery, DashboardQuery, DashboardResponse, DeleteReaderImageResponse,
+    DeleteReadingResponse, HealthResponse, ManualReadResponse, RangeQuery, ReaderGalleryQuery,
+    ReaderGalleryResponse, ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery,
+    UsagePoint,
 };
 use crate::reader_files::{build_gallery, delete_image, purge_old_images, resolve_image_path};
 
@@ -49,6 +50,7 @@ struct AppState {
         delete_reading,
         delete_reader_image,
         anomalies,
+        add_anomaly_to_raw_readings,
         archive_anomaly,
         unarchive_anomaly,
         cumulative_series,
@@ -68,6 +70,7 @@ struct AppState {
             DeleteReaderImageResponse,
             AnomalyDto,
             ArchiveAnomalyResponse,
+            AddAnomalyToRawReadingResponse,
             UsagePoint,
             AlertDto,
             DashboardResponse,
@@ -127,6 +130,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/readings", get(readings))
         .route("/api/readings/{id}", delete(delete_reading))
         .route("/api/anomalies", get(anomalies))
+        .route(
+            "/api/anomalies/{id}/raw-reading",
+            post(add_anomaly_to_raw_readings),
+        )
         .route("/api/anomalies/{id}/archive", patch(archive_anomaly))
         .route("/api/anomalies/{id}/unarchive", patch(unarchive_anomaly))
         .route("/api/series/cumulative", get(cumulative_series))
@@ -301,6 +308,31 @@ async fn anomalies(
     )
     .await?;
     Ok(Json(analytics::build_anomalies(&anomalies)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/anomalies/{id}/raw-reading",
+    params(("id" = i64, Path, description = "Anomaly id")),
+    responses(
+        (status = 200, description = "Anomaly copied to raw readings", body = AddAnomalyToRawReadingResponse),
+        (status = 404, description = "Anomaly not found")
+    )
+)]
+async fn add_anomaly_to_raw_readings(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AddAnomalyToRawReadingResponse>> {
+    let reading_id = db::add_anomaly_to_raw_readings(&state.pool, id).await?;
+    let Some(reading_id) = reading_id else {
+        return Err(AppError::NotFound(format!("anomaly {id} was not found")));
+    };
+
+    Ok(Json(AddAnomalyToRawReadingResponse {
+        id,
+        reading_id,
+        stored_as_raw: true,
+    }))
 }
 
 #[utoipa::path(

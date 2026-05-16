@@ -4,24 +4,28 @@ import { formatTimestamp, formatVolume } from "../utils";
 interface AnomaliesTableProps {
   anomalies: AnomalyItem[];
   showArchived: boolean;
-  pendingAnomalyId: number | null;
+  pendingArchiveAnomalyId: number | null;
+  pendingRawReadingAnomalyId: number | null;
   onArchiveAnomaly: (anomaly: AnomalyItem) => void;
   onUnarchiveAnomaly: (anomaly: AnomalyItem) => void;
+  onAddToRawReadings: (anomaly: AnomalyItem) => void;
 }
 
 export function AnomaliesTable({
   anomalies,
   showArchived,
-  pendingAnomalyId,
+  pendingArchiveAnomalyId,
+  pendingRawReadingAnomalyId,
   onArchiveAnomaly,
   onUnarchiveAnomaly,
+  onAddToRawReadings,
 }: AnomaliesTableProps) {
   return (
     <section className="card">
       <div className="section-head">
         <div>
           <h2>Skipped Anomalies</h2>
-          <p>Readings skipped during ingestion because the jump exceeded the configured threshold.</p>
+          <p>Readings skipped during ingestion because the delta was negative or exceeded the configured threshold.</p>
         </div>
       </div>
 
@@ -31,7 +35,7 @@ export function AnomaliesTable({
           <p>
             {showArchived
               ? "This range has no active or archived anomalies to review."
-              : "Large positive jumps will appear here until you archive them manually."}
+              : "Skipped readings will appear here until you archive them manually."}
           </p>
         </div>
       ) : (
@@ -82,25 +86,39 @@ export function AnomaliesTable({
                     </div>
                   </td>
                   <td className="reading-table__actions">
-                    {anomaly.archived ? (
+                    <div className="anomaly-actions">
                       <button
                         type="button"
-                        className="reading-archive-button"
-                        onClick={() => onUnarchiveAnomaly(anomaly)}
-                        disabled={pendingAnomalyId === anomaly.id}
+                        className="reading-archive-button reading-archive-button--raw"
+                        onClick={() => onAddToRawReadings(anomaly)}
+                        disabled={anomaly.storedAsRaw || pendingRawReadingAnomalyId === anomaly.id}
                       >
-                        {pendingAnomalyId === anomaly.id ? "Restoring..." : "Unarchive"}
+                        {pendingRawReadingAnomalyId === anomaly.id
+                          ? "Saving..."
+                          : anomaly.storedAsRaw
+                            ? "In raw"
+                            : "Add to raw"}
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="reading-archive-button"
-                        onClick={() => onArchiveAnomaly(anomaly)}
-                        disabled={pendingAnomalyId === anomaly.id}
-                      >
-                        {pendingAnomalyId === anomaly.id ? "Archiving..." : "Archive"}
-                      </button>
-                    )}
+                      {anomaly.archived ? (
+                        <button
+                          type="button"
+                          className="reading-archive-button"
+                          onClick={() => onUnarchiveAnomaly(anomaly)}
+                          disabled={pendingArchiveAnomalyId === anomaly.id}
+                        >
+                          {pendingArchiveAnomalyId === anomaly.id ? "Restoring..." : "Unarchive"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="reading-archive-button"
+                          onClick={() => onArchiveAnomaly(anomaly)}
+                          disabled={pendingArchiveAnomalyId === anomaly.id}
+                        >
+                          {pendingArchiveAnomalyId === anomaly.id ? "Archiving..." : "Archive"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

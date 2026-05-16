@@ -25,6 +25,7 @@ pub struct DbAnomaly {
     pub image_path: Option<String>,
     pub archived_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
+    pub raw_reading_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -90,6 +91,7 @@ pub struct AnomalyDto {
     pub source: String,
     pub image_url: Option<String>,
     pub archived: bool,
+    pub stored_as_raw: bool,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
@@ -100,6 +102,14 @@ pub struct AnomalyDto {
 pub struct ArchiveAnomalyResponse {
     pub id: i64,
     pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AddAnomalyToRawReadingResponse {
+    pub id: i64,
+    pub reading_id: i64,
+    pub stored_as_raw: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -322,6 +332,7 @@ mod tests {
                     .to_owned(),
             ),
             archived: true,
+            stored_as_raw: true,
             created_at: datetime!(2026-04-26 09:08:08 UTC),
         };
         let archive_response = ArchiveAnomalyResponse {
@@ -356,6 +367,7 @@ mod tests {
             json!("/api/reader/images/anomaly/2026-04-26/2026-04-26_09-08-07_anomaly-12.png")
         );
         assert_eq!(anomaly_json["archived"], json!(true));
+        assert_eq!(anomaly_json["storedAsRaw"], json!(true));
         assert_eq!(anomaly_json["createdAt"], json!("2026-04-26T09:08:08Z"));
         assert_eq!(archive_response_json["id"], json!(12));
         assert_eq!(archive_response_json["archived"], json!(true));
@@ -435,5 +447,4 @@ mod tests {
             json!("2026-03-16/2026-03-16_10-20-50.jpg")
         );
     }
-
 }

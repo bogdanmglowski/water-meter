@@ -455,6 +455,7 @@ fn map_anomaly(anomaly: &DbAnomaly) -> AnomalyDto {
             .as_ref()
             .map(|path| format!("/api/reader/images/anomaly/{path}")),
         archived: anomaly.archived_at.is_some(),
+        stored_as_raw: anomaly.raw_reading_id.is_some(),
         created_at: anomaly.created_at,
     }
 }

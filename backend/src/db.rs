@@ -198,28 +198,61 @@ pub async fn fetch_anomalies(
     sqlx::query_as::<_, DbAnomaly>(
         r#"
         SELECT
-            id,
-            recorded_at,
-            meter_value_m3,
-            previous_recorded_at,
-            previous_meter_value_m3,
-            delta_m3,
-            threshold_m3,
-            source,
-            image_path,
-            archived_at,
-            created_at
-        FROM meter_reading_anomalies
-        WHERE ($1::timestamptz IS NULL OR recorded_at >= $1)
-          AND ($2::timestamptz IS NULL OR recorded_at <= $2)
-          AND ($3::bool OR archived_at IS NULL)
-        ORDER BY recorded_at DESC, id DESC
+            anomaly.id,
+            anomaly.recorded_at,
+            anomaly.meter_value_m3,
+            anomaly.previous_recorded_at,
+            anomaly.previous_meter_value_m3,
+            anomaly.delta_m3,
+            anomaly.threshold_m3,
+            anomaly.source,
+            anomaly.image_path,
+            anomaly.archived_at,
+            anomaly.created_at,
+            raw_reading.id AS raw_reading_id
+        FROM meter_reading_anomalies AS anomaly
+        LEFT JOIN meter_readings AS raw_reading
+          ON raw_reading.recorded_at = anomaly.recorded_at
+         AND raw_reading.meter_value_m3 = anomaly.meter_value_m3
+        WHERE ($1::timestamptz IS NULL OR anomaly.recorded_at >= $1)
+          AND ($2::timestamptz IS NULL OR anomaly.recorded_at <= $2)
+          AND ($3::bool OR anomaly.archived_at IS NULL)
+        ORDER BY anomaly.recorded_at DESC, anomaly.id DESC
         "#,
     )
     .bind(from)
     .bind(to)
     .bind(include_archived)
     .fetch_all(pool)
+    .await
+}
+
+pub async fn add_anomaly_to_raw_readings(
+    pool: &PgPool,
+    id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        WITH anomaly AS (
+            SELECT recorded_at, meter_value_m3, source
+            FROM meter_reading_anomalies
+            WHERE id = $1
+        ),
+        upserted AS (
+            INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
+            SELECT recorded_at, meter_value_m3, source
+            FROM anomaly
+            ON CONFLICT (recorded_at) DO UPDATE
+            SET meter_value_m3 = EXCLUDED.meter_value_m3,
+                source = EXCLUDED.source
+            RETURNING id
+        )
+        SELECT id
+        FROM upserted
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
     .await
 }
 

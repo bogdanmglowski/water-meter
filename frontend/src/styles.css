@@ -1040,6 +1040,22 @@ a:focus-visible {
   opacity: 0.6;
 }
 
+.reading-archive-button--raw {
+  border-color: rgba(34, 211, 238, 0.28);
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.reading-archive-button--raw:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.48);
+  background: rgba(34, 211, 238, 0.15);
+}
+
+.anomaly-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 .anomaly-evidence {
   display: grid;
   gap: 0.45rem;

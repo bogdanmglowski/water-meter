@@ -235,6 +235,16 @@ export function archiveAnomaly(id: number) {
   });
 }
 
+export function addAnomalyToRawReadings(id: number) {
+  return request<{ id: number; readingId: number; storedAsRaw: boolean }>(
+    `/api/anomalies/${id}/raw-reading`,
+    undefined,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export function unarchiveAnomaly(id: number) {
   return request<{ id: number; archived: boolean }>(
     `/api/anomalies/${id}/unarchive`,

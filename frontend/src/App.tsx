@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  addAnomalyToRawReadings,
   archiveAnomaly,
   deleteReaderImage,
   deleteReading,
@@ -542,6 +543,27 @@ export default function App() {
     },
   });
 
+  const addAnomalyToRawReadingsMutation = useMutation({
+    mutationFn: (id: number) => addAnomalyToRawReadings(id),
+    onSuccess: async () => {
+      setArchiveAnomalyError(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["anomalies"] }),
+        queryClient.invalidateQueries({ queryKey: ["readings"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["cumulative"] }),
+        queryClient.invalidateQueries({ queryKey: ["consumption"] }),
+        queryClient.invalidateQueries({ queryKey: ["baseline"] }),
+        queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+      ]);
+    },
+    onError: (error) => {
+      setArchiveAnomalyError(
+        error instanceof Error ? error.message : "Add to raw readings request failed.",
+      );
+    },
+  });
+
   const unarchiveAnomalyMutation = useMutation({
     mutationFn: (id: number) => unarchiveAnomaly(id),
     onSuccess: async () => {
@@ -653,6 +675,18 @@ export default function App() {
     }
 
     unarchiveAnomalyMutation.mutate(anomaly.id);
+  }
+
+  function handleAddAnomalyToRawReadings(anomaly: AnomalyItem) {
+    const shouldAdd = window.confirm(
+      `Add anomaly from ${formatTimestamp(anomaly.recordedAt)} to raw readings?`,
+    );
+
+    if (!shouldAdd) {
+      return;
+    }
+
+    addAnomalyToRawReadingsMutation.mutate(anomaly.id);
   }
 
   function handleDeleteCurrentCrop() {
@@ -1119,7 +1153,7 @@ export default function App() {
                     <h2>Inspect anomaly readings directly</h2>
                     <p>
                       These readings were not inserted into the main meter feed because they exceeded
-                     the configured positive jump threshold after the full liter-precision register was interpreted.
+                      the configured positive jump threshold or moved backwards after the full liter-precision register was interpreted.
                     </p>
                 </div>
                 <span className="count-pill">{anomalies.length}</span>
@@ -1162,13 +1196,13 @@ export default function App() {
 
               <p className="range-meta">
                 Showing skipped anomaly rows for {activeRangeSummary}. Each row includes the
-                immediately previous reading and the jump amount that triggered the skip.
+                immediately previous reading and the delta that triggered the skip.
               </p>
             </section>
 
             {archiveAnomalyError ? (
               <section className="card error-card">
-                <strong>Anomaly archive request failed.</strong>
+                <strong>Anomaly action failed.</strong>
                 <p>{archiveAnomalyError}</p>
               </section>
             ) : null}
@@ -1176,15 +1210,21 @@ export default function App() {
             <AnomaliesTable
               anomalies={anomalies}
               showArchived={anomalyFilter !== "active"}
-              pendingAnomalyId={
+              pendingArchiveAnomalyId={
                 archiveAnomalyMutation.isPending
                   ? (archiveAnomalyMutation.variables ?? null)
                   : unarchiveAnomalyMutation.isPending
                     ? (unarchiveAnomalyMutation.variables ?? null)
                     : null
               }
+              pendingRawReadingAnomalyId={
+                addAnomalyToRawReadingsMutation.isPending
+                  ? (addAnomalyToRawReadingsMutation.variables ?? null)
+                  : null
+              }
               onArchiveAnomaly={handleArchiveAnomaly}
               onUnarchiveAnomaly={handleUnarchiveAnomaly}
+              onAddToRawReadings={handleAddAnomalyToRawReadings}
             />
           </>
         ) : isReaderGalleryPage ? (

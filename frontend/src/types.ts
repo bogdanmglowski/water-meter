@@ -48,6 +48,7 @@ export interface AnomalyItem {
   source: string;
   imageUrl: string | null;
   archived: boolean;
+  storedAsRaw: boolean;
   createdAt: string;
 }
 
