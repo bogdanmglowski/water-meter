@@ -25,12 +25,14 @@ use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AddAnomalyToRawReadingResponse, AlertDto, AnomaliesQuery, AnomalyDto, ArchiveAnomalyResponse,
-    ConsumptionQuery, DashboardQuery, DashboardResponse, DeleteReaderImageResponse,
-    DeleteReadingResponse, HealthResponse, ManualReadResponse, RangeQuery, ReaderGalleryQuery,
-    ReaderGalleryResponse, ReaderManualReadPayload, ReadingDto, ReadingsPageDto, ReadingsQuery,
-    UsagePoint,
+    ConsumptionQuery, DashboardQuery, DashboardResponse, DeleteReaderDayResponse,
+    DeleteReaderImageResponse, DeleteReadingResponse, HealthResponse, ManualReadResponse,
+    RangeQuery, ReaderGalleryQuery, ReaderGalleryResponse, ReaderManualReadPayload, ReadingDto,
+    ReadingsPageDto, ReadingsQuery, UsagePoint,
 };
-use crate::reader_files::{build_gallery, delete_image, purge_old_images, resolve_image_path};
+use crate::reader_files::{
+    build_gallery, delete_day, delete_image, purge_old_images, resolve_image_path,
+};
 
 #[derive(Clone)]
 struct AppState {
@@ -49,6 +51,7 @@ struct AppState {
         readings,
         delete_reading,
         delete_reader_image,
+        delete_reader_day,
         anomalies,
         add_anomaly_to_raw_readings,
         archive_anomaly,
@@ -67,6 +70,7 @@ struct AppState {
             ReadingDto,
             ReadingsPageDto,
             DeleteReadingResponse,
+            DeleteReaderDayResponse,
             DeleteReaderImageResponse,
             AnomalyDto,
             ArchiveAnomalyResponse,
@@ -148,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/reader/images/{category}/{*path}",
             delete(delete_reader_image),
         )
+        .route("/api/reader/days/{category}/{day}", delete(delete_reader_day))
         .route("/api/reader/images/{category}/{*path}", get(reader_image))
         .route("/api/openapi.json", get(openapi))
         .with_state(state)
@@ -516,6 +521,31 @@ async fn delete_reader_image(
         deleted: true,
         category,
         path,
+    }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/reader/days/{category}/{day}",
+    params(
+        ("category" = String, Path, description = "Image category: original or processed"),
+        ("day" = String, Path, description = "Day directory in YYYY-MM-DD format")
+    ),
+    responses(
+        (status = 200, description = "Reader image day deleted", body = DeleteReaderDayResponse),
+        (status = 404, description = "Reader image day not found")
+    )
+)]
+async fn delete_reader_day(
+    State(state): State<AppState>,
+    Path((category, day)): Path<(String, String)>,
+) -> AppResult<Json<DeleteReaderDayResponse>> {
+    let deleted_images = delete_day(&state.reader_runtime_dir, &category, &day)?;
+    Ok(Json(DeleteReaderDayResponse {
+        deleted: true,
+        category,
+        day,
+        deleted_images,
     }))
 }
 

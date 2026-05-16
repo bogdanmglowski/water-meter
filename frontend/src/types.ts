@@ -80,6 +80,12 @@ export interface ReaderImageDayGroup {
   items: ReaderImageItem[];
 }
 
+export interface CurrentReaderCrop {
+  url: string;
+  path: string;
+  capturedAt: string;
+}
+
 export interface ReaderGallerySection {
   page: number;
   pageSize: number;
@@ -89,7 +95,7 @@ export interface ReaderGallerySection {
 }
 
 export interface ReaderGallery {
-  currentCropUrl: string | null;
+  currentCrop: CurrentReaderCrop | null;
   originalImages: ReaderGallerySection;
   processedImages: ReaderGallerySection;
 }

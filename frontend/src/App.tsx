@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addAnomalyToRawReadings,
   archiveAnomaly,
+  deleteReaderDay,
   deleteReaderImage,
   deleteReading,
   getAlerts,
@@ -35,6 +36,7 @@ import {
   buildRange,
   formatBucketLabel,
   formatDateTimeInput,
+  formatPreciseTimestamp,
   formatTimestamp,
   formatVolume,
   formatVolumeAxis,
@@ -169,9 +171,12 @@ function renderReaderImageCard(
 function renderReaderDayGroup(
   dayGroup: ReaderImageDayGroup,
   defaultOpen: boolean,
-  isDeletePending: boolean,
+  isDeleteImagePending: boolean,
   deletingImagePath: string | null,
+  isDeleteDayPending: boolean,
+  deletingDay: string | null,
   onDeleteImage: (image: ReaderImageItem) => void,
+  onDeleteDay: (dayGroup: ReaderImageDayGroup) => void,
 ) {
   return (
     <details key={dayGroup.day} className="image-day-group" open={defaultOpen}>
@@ -180,13 +185,29 @@ function renderReaderDayGroup(
           <strong>{formatTimestamp(`${dayGroup.day}T00:00:00Z`)}</strong>
           <span>{dayGroup.items.length} image{dayGroup.items.length === 1 ? "" : "s"}</span>
         </div>
-        <span className="count-pill">{dayGroup.items.length}</span>
+        <div className="image-day-group__actions">
+          <span className="count-pill">{dayGroup.items.length}</span>
+          <button
+            type="button"
+            className="image-delete-button image-delete-button--day"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onDeleteDay(dayGroup);
+            }}
+            disabled={isDeleteDayPending}
+            aria-label={`Delete all images from ${dayGroup.day}`}
+            title="Delete all images from this day"
+          >
+            {isDeleteDayPending && deletingDay === dayGroup.day ? "Deleting day..." : "Delete day"}
+          </button>
+        </div>
       </summary>
       <div className="image-grid image-grid--grouped">
         {dayGroup.items.map((image) =>
           renderReaderImageCard(
             image,
-            isDeletePending,
+            isDeleteImagePending,
             deletingImagePath === image.path,
             onDeleteImage,
           ),
@@ -532,6 +553,19 @@ export default function App() {
     },
   });
 
+  const deleteReaderDayMutation = useMutation({
+    mutationFn: ({ category, day }: { category: string; day: string }) =>
+      deleteReaderDay(category, day),
+    onSuccess: async () => {
+      setDeleteImageError(null);
+      await queryClient.invalidateQueries({ queryKey: ["reader-gallery"] });
+    },
+    onError: async (error) => {
+      setDeleteImageError(error instanceof Error ? error.message : "Delete day request failed.");
+      await queryClient.invalidateQueries({ queryKey: ["reader-gallery"] });
+    },
+  });
+
   const archiveAnomalyMutation = useMutation({
     mutationFn: (id: number) => archiveAnomaly(id),
     onSuccess: async () => {
@@ -654,6 +688,21 @@ export default function App() {
     deleteReaderImageMutation.mutate({
       category: image.kind,
       path: image.path,
+    });
+  }
+
+  function handleDeleteReaderDay(category: "original" | "processed", dayGroup: ReaderImageDayGroup) {
+    const shouldDelete = window.confirm(
+      `Delete all ${dayGroup.items.length} image${dayGroup.items.length === 1 ? "" : "s"} from ${formatTimestamp(`${dayGroup.day}T00:00:00Z`)}? This will remove the whole day directory from the reader runtime directory.`,
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    deleteReaderDayMutation.mutate({
+      category,
+      day: dayGroup.day,
     });
   }
 
@@ -1268,20 +1317,30 @@ export default function App() {
                   </div>
                 </div>
 
-                {readerGallery?.currentCropUrl ? (
+                {readerGallery?.currentCrop ? (
                   <div className="image-feature-stack">
                     <a
-                      href={readerGallery.currentCropUrl}
+                      href={readerGallery.currentCrop.url}
                       target="_blank"
                       rel="noreferrer"
                       className="image-feature"
                     >
                       <img
-                        src={readerGallery.currentCropUrl}
+                        src={readerGallery.currentCrop.url}
                         alt="Current OCR crop"
                         className="image-feature__image"
                       />
                     </a>
+                    <div className="image-feature__meta">
+                      <div>
+                        <span className="range-field__label">Captured</span>
+                        <strong>{formatPreciseTimestamp(readerGallery.currentCrop.capturedAt)}</strong>
+                      </div>
+                      <div>
+                        <span className="range-field__label">File path</span>
+                        <code>{readerGallery.currentCrop.path}</code>
+                      </div>
+                    </div>
                     <div className="image-feature__actions">
                       <button
                         type="button"
@@ -1332,7 +1391,10 @@ export default function App() {
                         index === 0,
                         deleteReaderImageMutation.isPending,
                         deleteReaderImageMutation.variables?.path ?? null,
+                        deleteReaderDayMutation.isPending,
+                        deleteReaderDayMutation.variables?.day ?? null,
                         handleDeleteReaderImage,
+                        (group) => handleDeleteReaderDay("original", group),
                       ),
                     )}
                   </div>
@@ -1373,7 +1435,10 @@ export default function App() {
                       index === 0,
                       deleteReaderImageMutation.isPending,
                       deleteReaderImageMutation.variables?.path ?? null,
+                      deleteReaderDayMutation.isPending,
+                      deleteReaderDayMutation.variables?.day ?? null,
                       handleDeleteReaderImage,
+                      (group) => handleDeleteReaderDay("processed", group),
                     ),
                   )}
                 </div>

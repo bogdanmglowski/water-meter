@@ -19,6 +19,15 @@ const dtf = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
+const preciseDateTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
 const shortDate = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -188,6 +197,11 @@ export function toIsoTimestamp(value: unknown) {
 export function formatTimestamp(value: unknown) {
   const parsed = parseTimestamp(value);
   return parsed ? safeFormatDate(dtf, parsed) ?? "Unknown time" : "Unknown time";
+}
+
+export function formatPreciseTimestamp(value: unknown) {
+  const parsed = parseTimestamp(value);
+  return parsed ? safeFormatDate(preciseDateTime, parsed) ?? "Unknown time" : "Unknown time";
 }
 
 export function formatDateTimeInput(value: unknown) {

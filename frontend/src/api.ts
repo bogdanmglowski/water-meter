@@ -2,6 +2,7 @@ import type {
   AlertItem,
   AnomalyItem,
   Bucket,
+  CurrentReaderCrop,
   DashboardResponse,
   ManualReadResult,
   ReaderGallery,
@@ -41,8 +42,9 @@ type RawReadingsPage = Omit<ReadingsPage, "items"> & {
 };
 type RawReaderImageItem = ReaderImageItem;
 type RawReaderGallerySection = ReaderGallerySection;
-type RawReaderGallery = Omit<ReaderGallery, "currentCropUrl" | "originalImages" | "processedImages"> & {
-  currentCropUrl: string | null;
+type RawCurrentReaderCrop = CurrentReaderCrop;
+type RawReaderGallery = Omit<ReaderGallery, "currentCrop" | "originalImages" | "processedImages"> & {
+  currentCrop: RawCurrentReaderCrop | null;
   originalImages: RawReaderGallerySection;
   processedImages: RawReaderGallerySection;
 };
@@ -279,7 +281,7 @@ export function getReaderGallery() {
     processed_page: 1,
     page_size: 7,
   }).then((gallery) => ({
-    currentCropUrl: gallery.currentCropUrl,
+    currentCrop: gallery.currentCrop,
     originalImages: gallery.originalImages,
     processedImages: gallery.processedImages,
   }));
@@ -295,7 +297,7 @@ export function getReaderGalleryPage(params: {
     processed_page: params.processedPage,
     page_size: params.pageSize,
   }).then((gallery) => ({
-    currentCropUrl: gallery.currentCropUrl,
+    currentCrop: gallery.currentCrop,
     originalImages: gallery.originalImages,
     processedImages: gallery.processedImages,
   }));
@@ -304,6 +306,16 @@ export function getReaderGalleryPage(params: {
 export function deleteReaderImage(category: string, path: string) {
   return request<{ deleted: boolean; category: string; path: string }>(
     `/api/reader/images/${encodeURIComponent(category)}/${path}`,
+    undefined,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export function deleteReaderDay(category: string, day: string) {
+  return request<{ deleted: boolean; category: string; day: string; deletedImages: number }>(
+    `/api/reader/days/${encodeURIComponent(category)}/${encodeURIComponent(day)}`,
     undefined,
     {
       method: "DELETE",

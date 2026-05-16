@@ -5,7 +5,8 @@ use time::{Date, Duration, OffsetDateTime};
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem,
+    CurrentReaderCrop, ReaderGalleryResponse, ReaderGallerySection, ReaderImageDayGroup,
+    ReaderImageItem,
 };
 
 const CURRENT_CROP_NAME: &str = "meter-crop.png";
@@ -17,12 +18,13 @@ pub fn build_gallery(
     page_size: usize,
 ) -> AppResult<ReaderGalleryResponse> {
     let current_crop_path = reader_runtime_dir.join(CURRENT_CROP_NAME);
-    let current_crop_url = current_crop_path
+    let current_crop = current_crop_path
         .is_file()
-        .then(|| format!("/api/reader/images/current/{CURRENT_CROP_NAME}"));
+        .then(|| current_crop_metadata(&current_crop_path))
+        .transpose()?;
 
     Ok(ReaderGalleryResponse {
-        current_crop_url,
+        current_crop,
         original_images: paginate_day_groups(
             collect_images(&reader_runtime_dir.join("pictures"), "original")?,
             original_page,
@@ -114,6 +116,29 @@ pub fn delete_image(
     Ok(())
 }
 
+pub fn delete_day(reader_runtime_dir: &Path, category: &str, day: &str) -> AppResult<usize> {
+    let root = match category {
+        "original" => reader_runtime_dir.join("pictures"),
+        "processed" => reader_runtime_dir.join("processed"),
+        other => {
+            return Err(AppError::NotFound(format!(
+                "reader image category '{other}' was not found"
+            )));
+        }
+    };
+
+    let day_dir = resolve_day_dir(&root, day)?;
+    let deleted = count_images_in_dir(&day_dir)?;
+    if deleted == 0 {
+        return Err(AppError::NotFound(format!(
+            "reader image day '{day}' was not found"
+        )));
+    }
+
+    fs::remove_dir_all(&day_dir).map_err(map_fs_delete_error)?;
+    Ok(deleted)
+}
+
 pub fn purge_old_images(
     reader_runtime_dir: &Path,
     now: OffsetDateTime,
@@ -141,6 +166,23 @@ fn collect_images(root: &Path, kind: &str) -> AppResult<Vec<ReaderImageItem>> {
     walk_images(root, root, kind, &mut images)?;
     images.sort_by(|left, right| right.captured_at.cmp(&left.captured_at));
     Ok(images)
+}
+
+fn current_crop_metadata(current_crop_path: &Path) -> AppResult<CurrentReaderCrop> {
+    let metadata =
+        fs::metadata(current_crop_path).map_err(|error| AppError::Internal(error.to_string()))?;
+    let modified = metadata
+        .modified()
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    let captured_at = OffsetDateTime::from(modified)
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+
+    Ok(CurrentReaderCrop {
+        url: format!("/api/reader/images/current/{CURRENT_CROP_NAME}"),
+        path: current_crop_path.display().to_string(),
+        captured_at,
+    })
 }
 
 fn paginate_day_groups(
@@ -264,6 +306,47 @@ fn path_to_url_path(path: &Path) -> AppResult<String> {
     Ok(parts.join("/"))
 }
 
+fn resolve_day_dir(root: &Path, day: &str) -> AppResult<PathBuf> {
+    let day_path = Path::new(day);
+    if day_path.is_absolute()
+        || day_path.components().count() != 1
+        || day_path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::BadRequest("invalid reader image day".to_owned()));
+    }
+
+    Date::parse(
+        day,
+        &time::macros::format_description!("[year]-[month]-[day]"),
+    )
+    .map_err(|_| AppError::BadRequest("invalid reader image day".to_owned()))?;
+
+    let path = root.join(day_path);
+    if !path.is_dir() {
+        return Err(AppError::NotFound(format!(
+            "reader image day '{day}' was not found"
+        )));
+    }
+
+    Ok(path)
+}
+
+fn map_fs_delete_error(error: std::io::Error) -> AppError {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+    ) {
+        return AppError::Internal(format!("reader image directory is not writable: {error}"));
+    }
+
+    AppError::Internal(error.to_string())
+}
+
 fn purge_old_category(root: &Path, cutoff_day: Date) -> AppResult<usize> {
     if !root.exists() {
         return Ok(0);
@@ -377,7 +460,7 @@ mod tests {
     use std::fs;
     use time::macros::datetime;
 
-    use super::{build_gallery, delete_image, purge_old_images, resolve_image_path};
+    use super::{build_gallery, delete_day, delete_image, purge_old_images, resolve_image_path};
 
     fn touch(path: &Path) {
         if let Some(parent) = path.parent() {
@@ -400,8 +483,12 @@ mod tests {
         let gallery = build_gallery(root, 1, 1, 7).expect("gallery");
 
         assert_eq!(
-            gallery.current_crop_url.as_deref(),
+            gallery.current_crop.as_ref().map(|crop| crop.url.as_str()),
             Some("/api/reader/images/current/meter-crop.png")
+        );
+        assert_eq!(
+            gallery.current_crop.as_ref().map(|crop| crop.path.as_str()),
+            Some(root.join("meter-crop.png").to_string_lossy().as_ref())
         );
         assert_eq!(gallery.original_images.total_days, 2);
         assert_eq!(gallery.original_images.day_groups.len(), 2);
@@ -491,6 +578,31 @@ mod tests {
 
         assert!(!image_path.exists());
         assert!(!root.join("pictures/2026-03-16").exists());
+    }
+
+    #[test]
+    fn delete_day_removes_all_images_for_original_day() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let root = tempdir.path();
+        touch(&root.join("pictures/2026-03-16/2026-03-16_10-20-50.jpg"));
+        touch(&root.join("pictures/2026-03-16/2026-03-16_10-25-50.jpg"));
+        touch(&root.join("pictures/2026-03-15/2026-03-15_09-10-11.jpg"));
+
+        let deleted = delete_day(root, "original", "2026-03-16").expect("delete day");
+
+        assert_eq!(deleted, 2);
+        assert!(!root.join("pictures/2026-03-16").exists());
+        assert!(root.join("pictures/2026-03-15/2026-03-15_09-10-11.jpg").exists());
+    }
+
+    #[test]
+    fn delete_day_rejects_invalid_day_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+
+        let error = delete_day(tempdir.path(), "processed", "../2026-03-16")
+            .expect_err("should reject invalid day path");
+
+        assert_eq!(error.to_string(), "invalid reader image day");
     }
 
     #[test]

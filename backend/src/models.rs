@@ -244,10 +244,27 @@ pub struct ReaderGalleryQuery {
 
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CurrentReaderCrop {
+    pub url: String,
+    pub path: String,
+    pub captured_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ReaderGalleryResponse {
-    pub current_crop_url: Option<String>,
+    pub current_crop: Option<CurrentReaderCrop>,
     pub original_images: ReaderGallerySection,
     pub processed_images: ReaderGallerySection,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteReaderDayResponse {
+    pub deleted: bool,
+    pub category: String,
+    pub day: String,
+    pub deleted_images: usize,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -273,9 +290,9 @@ mod tests {
     use time::macros::datetime;
 
     use super::{
-        AlertDto, AlertSeverity, AnomalyDto, ArchiveAnomalyResponse, DashboardResponse,
-        DashboardSummary, ManualReadResponse, ReaderGalleryResponse, ReaderGallerySection,
-        ReaderImageDayGroup, ReaderImageItem, ReadingDto, UsagePoint,
+        AlertDto, AlertSeverity, AnomalyDto, ArchiveAnomalyResponse, CurrentReaderCrop,
+        DashboardResponse, DashboardSummary, ManualReadResponse, ReaderGalleryResponse,
+        ReaderGallerySection, ReaderImageDayGroup, ReaderImageItem, ReadingDto, UsagePoint,
     };
 
     #[test]
@@ -376,7 +393,11 @@ mod tests {
     #[test]
     fn reader_gallery_serializes_in_camel_case() {
         let gallery = ReaderGalleryResponse {
-            current_crop_url: Some("/api/reader/images/current/meter-crop.png".to_owned()),
+            current_crop: Some(CurrentReaderCrop {
+                url: "/api/reader/images/current/meter-crop.png".to_owned(),
+                path: "/reader/runtime/meter-crop.png".to_owned(),
+                captured_at: "2026-03-16T10:20:50Z".to_owned(),
+            }),
             original_images: ReaderGallerySection {
                 page: 1,
                 page_size: 7,
@@ -406,8 +427,13 @@ mod tests {
         let gallery_json = serde_json::to_value(gallery).expect("gallery serializes");
 
         assert_eq!(
-            gallery_json["currentCropUrl"],
+            gallery_json["currentCrop"]["url"],
             json!("/api/reader/images/current/meter-crop.png")
+        );
+        assert_eq!(gallery_json["currentCrop"]["path"], json!("/reader/runtime/meter-crop.png"));
+        assert_eq!(
+            gallery_json["currentCrop"]["capturedAt"],
+            json!("2026-03-16T10:20:50Z")
         );
         assert_eq!(gallery_json["originalImages"]["pageSize"], json!(7));
         assert_eq!(

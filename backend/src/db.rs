@@ -3,6 +3,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use time::OffsetDateTime;
 
+use crate::error::{AppError, AppResult};
 use crate::models::{DbAnomaly, DbReading};
 
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
@@ -227,33 +228,88 @@ pub async fn fetch_anomalies(
     .await
 }
 
-pub async fn add_anomaly_to_raw_readings(
-    pool: &PgPool,
-    id: i64,
-) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>(
+pub async fn add_anomaly_to_raw_readings(pool: &PgPool, id: i64) -> AppResult<Option<i64>> {
+    let anomaly = sqlx::query_as::<_, (OffsetDateTime, i64, String)>(
         r#"
-        WITH anomaly AS (
-            SELECT recorded_at, meter_value_m3, source
-            FROM meter_reading_anomalies
-            WHERE id = $1
-        ),
-        upserted AS (
-            INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
-            SELECT recorded_at, meter_value_m3, source
-            FROM anomaly
-            ON CONFLICT (recorded_at) DO UPDATE
-            SET meter_value_m3 = EXCLUDED.meter_value_m3,
-                source = EXCLUDED.source
-            RETURNING id
-        )
-        SELECT id
-        FROM upserted
+        SELECT recorded_at, meter_value_m3, source
+        FROM meter_reading_anomalies
+        WHERE id = $1
         "#,
     )
     .bind(id)
     .fetch_optional(pool)
-    .await
+    .await?;
+
+    let Some((recorded_at, meter_value_m3, source)) = anomaly else {
+        return Ok(None);
+    };
+
+    let previous_value = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT meter_value_m3
+        FROM meter_readings
+        WHERE recorded_at < $1
+        ORDER BY recorded_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(recorded_at)
+    .fetch_optional(pool)
+    .await?;
+
+    let next_value = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT meter_value_m3
+        FROM meter_readings
+        WHERE recorded_at > $1
+        ORDER BY recorded_at ASC, id ASC
+        LIMIT 1
+        "#,
+    )
+    .bind(recorded_at)
+    .fetch_optional(pool)
+    .await?;
+
+    if !raw_reading_fits_monotonic_sequence(previous_value, meter_value_m3, next_value) {
+        return Err(AppError::BadRequest(
+            "raw readings must stay non-decreasing; this anomaly remains archived-only"
+                .to_owned(),
+        ));
+    }
+
+    let reading_id = sqlx::query_scalar::<_, i64>(
+        r#"
+        INSERT INTO meter_readings (recorded_at, meter_value_m3, source)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (recorded_at) DO UPDATE
+        SET meter_value_m3 = EXCLUDED.meter_value_m3,
+            source = EXCLUDED.source
+        RETURNING id
+        "#,
+    )
+    .bind(recorded_at)
+    .bind(meter_value_m3)
+    .bind(source)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(Some(reading_id))
+}
+
+fn raw_reading_fits_monotonic_sequence(
+    previous_value: Option<i64>,
+    candidate_value: i64,
+    next_value: Option<i64>,
+) -> bool {
+    if previous_value.is_some_and(|previous| candidate_value < previous) {
+        return false;
+    }
+
+    if next_value.is_some_and(|next| candidate_value > next) {
+        return false;
+    }
+
+    true
 }
 
 pub async fn archive_anomaly(pool: &PgPool, id: i64) -> Result<Option<i64>, sqlx::Error> {
@@ -341,4 +397,24 @@ pub async fn fetch_window_readings(
     }
 
     Ok(readings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::raw_reading_fits_monotonic_sequence;
+
+    #[test]
+    fn raw_reading_rejects_value_smaller_than_previous() {
+        assert!(!raw_reading_fits_monotonic_sequence(Some(1_205), 995, None));
+    }
+
+    #[test]
+    fn raw_reading_rejects_value_larger_than_next() {
+        assert!(!raw_reading_fits_monotonic_sequence(None, 1_205, Some(1_100)));
+    }
+
+    #[test]
+    fn raw_reading_accepts_value_between_neighbors() {
+        assert!(raw_reading_fits_monotonic_sequence(Some(1_000), 1_050, Some(1_100)));
+    }
 }
