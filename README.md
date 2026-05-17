@@ -1,383 +1,97 @@
+![Water Meter dashboard screenshot](docs/water-meter.png)
+
 # Water Meter
 
-Browser-first water meter analytics for a single cumulative meter. An external process writes readings into PostgreSQL; this app reads them, derives consumption, highlights anomalies, and renders a responsive dashboard.
+Dashboards and anomaly detection for a single cumulative water meter. An external process (USB camera + OCR reader, or any other writer) periodically inserts cumulative register values into PostgreSQL. The backend converts those raw readings into interval consumption, aggregates into hourly/daily/weekly/monthly views, detects spikes, overnight leaks, and negative deltas, and exposes everything over a JSON API. The frontend renders a responsive dashboard with summary cards, consumption charts, alert cards, and a raw readings table. A bit of my code and a bit of code from various agents. 
 
-## Index
-
-- [Overview](#overview)
-- [Repository Modules](#repository-modules)
-- [Features](#features)
-- [Prerequisites](#prerequisites)
+- [Components](#components)
+- [Quick Start](#quick-start)
+- [Deployment](#deployment)
 - [Configuration](#configuration)
-- [Build And Run](#build-and-run)
-- [Project Cleanup](#project-cleanup)
-- [Development Workflow](#development-workflow)
-- [API](#api)
 
-## Overview
+## Components
 
-This repository implements a read-only analytics app for one water meter.
+- **backend** -- Rust API that reads cumulative meter readings from PostgreSQL, derives interval consumption, aggregates into time buckets, and exposes JSON endpoints with OpenAPI output.
+- **frontend** -- React SPA (Vite) that fetches dashboard data, renders consumption charts (ECharts), summary cards, alert cards, and a raw readings table with date-range and bucket controls.
+- **infra** -- Docker Compose stack that runs PostgreSQL, the backend, frontend (behind Nginx), and an optional seed container for demo data.
+- **reader** -- Python app that captures USB camera frames, crops the meter display, OCRs it via Ollama (`glm-ocr`), and optionally writes the recognized value to PostgreSQL with configurable anomaly threshold.
 
-The data model assumes cumulative meter readings, not per-interval usage. The backend converts those cumulative values into interval consumption, aggregates the results into hourly, daily, weekly, and monthly views, and produces alert signals for suspicious behavior such as spikes, overnight flow, or reset-like negative deltas.
-
-The frontend is a responsive single-page dashboard intended to work well on desktop and phone. A single Docker Compose stack can build and run the full demo locally, and the same container stack is the recommended deployment model for a Linux host in a LAN.
-
-## Repository Modules
-
-### `backend/`
-
-Rust API service for analytics and data access.
-
-Responsibilities:
-- connect to PostgreSQL
-- run SQL migrations on startup
-- read cumulative readings from `meter_readings`
-- derive usage deltas between consecutive readings
-- aggregate consumption into chart-ready time buckets
-- detect alert conditions for spikes, overnight leak suspicion, and negative deltas
-- expose JSON API endpoints and OpenAPI output
-
-Important files:
-- [backend/Cargo.toml](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backend/Cargo.toml)
-- [backend/src/main.rs](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backend/src/main.rs)
-- [backend/src/analytics.rs](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backend/src/analytics.rs)
-- [backend/src/db.rs](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backend/src/db.rs)
-- [backend/migrations/0001_init.sql](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backend/migrations/0001_init.sql)
-
-### `frontend/`
-
-React dashboard for viewing water usage and anomalies.
-
-Responsibilities:
-- fetch dashboard, chart, alert, and raw reading data from the backend
-- let the user switch date ranges and aggregation buckets
-- render cumulative trend and interval consumption charts
-- show summary cards for today, last 24 hours, last 7 days, and month-to-date
-- display alert cards and a raw readings table
-- build a static production bundle with Vite
-
-Important files:
-- [frontend/package.json](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/package.json)
-- [frontend/src/App.tsx](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/src/App.tsx)
-- [frontend/src/components/EChart.tsx](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/src/components/EChart.tsx)
-- [frontend/src/api.ts](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/src/api.ts)
-- [frontend/src/styles.css](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/frontend/src/styles.css)
-
-### `infra/`
-
-Infrastructure files for local Docker startup.
-
-Responsibilities:
-- define the local Docker Compose stack
-- run PostgreSQL, the backend API, and the frontend client together
-- provide the SQL seed used for test and demo data
-
-`psql postgresql://meter:meter@localhost:5432/water_meter`
-
-Important files:
-- [infra/docker-compose.yml](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/docker-compose.yml)
-- [infra/db/seed.sql](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/infra/db/seed.sql)
-
-### `backup/`
-
-One-off PostgreSQL backup container used by the deployment stack.
-
-Important files:
-- [backup/Dockerfile](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backup/Dockerfile)
-- [backup/docker-run.sh](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/backup/docker-run.sh)
-
-### `scripts/`
-
-Helper scripts for local development.
-
-Responsibilities:
-- execute one-off project tasks that are easier to run from a shell wrapper than from raw commands
-- currently includes demo data reseeding against the running PostgreSQL container
-
-Important files:
-- [scripts/seed-db.sh](/home/bogdan/dev/workspaces/workspace_private_projects/water-meter/scripts/seed-db.sh)
-
-## Features
-
-- summary cards for today, last 24 hours, last 7 days, and month-to-date
-- cumulative meter trend chart
-- consumption charts by hour, day, week, or month
-- baseline-vs-actual daily view
-- alerting for spikes, overnight leak suspicion, and negative deltas
-- raw readings table with range filtering
-- seed data generator for two years of 10-minute readings
-- OpenAPI JSON output from the Rust backend
-
-## Prerequisites
-
-Install these tools before building or running the project:
-
-- Rust toolchain with `cargo`
-- Node.js 22+ with `npm`
-- Docker with Docker Compose support
-- `psql` is not required locally because the seed script runs inside the database container
-
-## Configuration
-
-1. Create a local environment file:
-
-```bash
-cp .env.example .env
-```
-
-2. Review the variables in `.env`:
-
-- `DATABASE_URL`: backend connection string
-- `APP_HOST`: backend bind host
-- `APP_PORT`: backend bind port
-- `CLIENT_HOST`: host name or LAN IP shown in container startup logs
-- `CLIENT_PORT`: published frontend port
-- `CLIENT_ORIGIN`: allowed frontend origin for backend CORS
-- `READER_RUNTIME_DIR`: backend path for current crop and archived reader images
-- `READER_IMAGE_RETENTION_DAYS`: auto-delete archived reader images older than this many days
-- `POSTGRES_DB`: database name used by Docker and seed script
-- `POSTGRES_USER`: database user
-- `POSTGRES_PASSWORD`: database password
-- `BACKUP_HOST_DIR`: absolute host directory where `./scripts/deploy.sh backup` writes dumps
-- `SEED_DEMO_DATA`: whether Docker startup should seed demo data into an empty database
-- `VITE_API_BASE_URL`: optional extra variable for manual frontend runs against a non-default API base
-
-Default local behavior:
-- Docker stack client: `http://localhost:5173`
-- Docker stack API via frontend proxy: `http://localhost:5173/api`
-- PostgreSQL stays on the internal Docker network in the ready-to-use stack
-- leave `VITE_API_BASE_URL` unset to keep Vite proxying `/api`
-- add `VITE_API_BASE_URL` only for manual frontend runs against a non-default API base
-
-## Build And Run
-
-### Ready-To-Use Stack
-
-Start everything with one command:
+## Quick Start
 
 ```bash
 cp .env.example .env
 docker compose -f infra/docker-compose.yml up --build -d
 ```
 
-Open the client in your browser:
-- `http://localhost:5173`
+Open `http://localhost:5173`.
 
-Useful URLs:
-- client: `http://localhost:5173`
-- API health: `http://localhost:5173/api/health`
-- OpenAPI: `http://localhost:5173/api/openapi.json`
+## Deployment
 
-Logs:
+For a LAN Linux host, copy the repo to `/opt/water-meter`, configure `.env`, then use the deploy script:
 
 ```bash
-docker compose -f infra/docker-compose.yml logs -f
+./scripts/deploy.sh up          # base stack
+./scripts/deploy.sh up --reader # with camera reader
+./scripts/deploy.sh backup      # database dump
 ```
 
-Notes:
-- frontend startup logs print the client and API URLs
-- the `seed` service loads demo data only when `SEED_DEMO_DATA=true` and `meter_readings` is empty
-
-Stop the stack:
-
-```bash
-docker compose -f infra/docker-compose.yml down
-```
-
-If the default frontend port is busy, override it when starting the stack:
-
-```bash
-CLIENT_PORT=5174 docker compose -f infra/docker-compose.yml up --build -d
-```
-
-### Linux LAN Deployment
-
-Use this when the app should run continuously on another Linux machine in your network.
-
-1. Copy the repository to the target host, for example `/opt/water-meter`.
-2. Install Docker Engine with the Docker Compose plugin.
-3. Create a deployment env file:
-
-```bash
-cp .env.example .env
-```
-
-4. Edit `.env`:
-
-- set `CLIENT_HOST` to the server LAN IP or DNS name
-- set `CLIENT_PORT` to the published frontend port, usually `80`
-- set `CLIENT_ORIGIN` to the exact frontend origin, including the port when it is not `80`
-- set a real `POSTGRES_PASSWORD`
-- set `BACKUP_HOST_DIR` to the host directory that should receive database dumps
-- keep `SEED_DEMO_DATA=false` unless this host should start with demo data
-
-5. Start the stack:
-
-```bash
-./scripts/deploy.sh up
-```
-
-Start the stack with the camera reader enabled:
-
-```bash
-./scripts/deploy.sh up --reader
-```
-
-Optional demo bootstrap:
-
-```bash
-./scripts/deploy.sh up --demo
-```
-
-Create a database backup:
-
-```bash
-./scripts/deploy.sh backup
-```
-
-Operational commands:
-
-```bash
-./scripts/deploy.sh logs
-./scripts/deploy.sh ps
-./scripts/deploy.sh restart
-./scripts/deploy.sh down
-```
-
-Deployment behavior:
-- the frontend is the only published service
-- `/api` is proxied internally to the Rust backend
-- PostgreSQL remains private to the Docker network
-- the backend is no longer published directly on a host port
-- the default Docker network uses `WATER_METER_NETWORK`, with a fixed subnet from `WATER_METER_SUBNET`
-
-Reader profile notes:
-- `--reader` enables the compose profile that starts the USB reader container alongside `db`, `backend`, and `frontend`
-- reader settings come from `.env`, using the `READER_*` variables shown in `.env.example`
-- set `READER_VIDEO_DEVICE` to the correct host device such as `/dev/video0`
-- the reader is USB-only, always saves original frames, always writes a crop file, and reads the meter value through the Ollama HTTP API with model `glm-ocr`
-- when `READER_PG_WRITE=true`, the recognized value is written into PostgreSQL with the last three digits treated as liters
-- `READER_OCR_APPEND_DIGIT` appends one trailing digit before insert, useful when the physical meter omits the final liter digit
-- `READER_PG_ANOMALY_THRESHOLD` skips unusually large positive jumps and stores them in `meter_reading_anomalies` instead of `meter_readings`
-- crop coordinates are required
-- `READER_CONTROL_BIND` controls where the reader listens inside its container, while `READER_CONTROL_PUBLISH` controls the host address and port published by Docker
-- the backend can expose the current crop plus archived original and processed reader images from `READER_RUNTIME_DIR`
-- the reader container reaches host Ollama through `OLLAMA_BASE_URL`, defaulting to `http://host.docker.internal:11434`
-- host Ollama must listen on an address reachable from Docker
-- the reader container writes images into `reader/runtime/` on the host
-
-Backup notes:
-- `./scripts/deploy.sh backup` runs the `backup/` container through the same compose stack
-- dumps are written to `BACKUP_HOST_DIR`, default `/tmp`
-
-Optional autostart with `systemd`:
+Optional systemd autostart:
 
 ```bash
 sudo cp infra/systemd/water-meter.service /etc/systemd/system/
-sudo systemctl daemon-reload
 sudo systemctl enable --now water-meter.service
 ```
 
-The provided service assumes the repository lives in `/opt/water-meter`. Adjust the `WorkingDirectory`, `ExecStart`, and `ExecStop` paths if you deploy it elsewhere.
+## Configuration
 
-### Manual Development
+Copy `.env.example` to `.env` and adjust the variables below.
 
-Use this only if `DATABASE_URL` points to a reachable PostgreSQL instance.
+### Backend & Frontend
 
-Backend:
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgres://water_meter:water_meter@localhost:5432/water_meter` | Backend PostgreSQL connection string |
+| `APP_HOST` | `0.0.0.0` | Backend bind address |
+| `APP_PORT` | `8080` | Backend bind port |
+| `CLIENT_HOST` | `192.168.1.34` | Hostname or LAN IP shown in container startup logs |
+| `CLIENT_PORT` | `80` | Published frontend port (e.g. `80`, `5173`) |
+| `CLIENT_ORIGIN` | `http://192.168.1.34` | Allowed CORS origin for the backend (must match the browser's address exactly) |
+| `API_URL` | `http://192.168.1.34/api/health` | Health check URL logged at startup |
+| `RUST_LOG` | `info,tower_http=info` | Rust backend log level |
+| `VITE_API_BASE_URL` | _(unset)_ | Override the API base URL for manual frontend runs outside Docker; when unset, Vite proxies `/api` to `localhost:8080` |
 
-```bash
-cd backend
-cargo check
-cargo test
-cargo run
-```
+### Docker Stack
 
-Frontend:
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_DB` | `water_meter` | PostgreSQL database name |
+| `POSTGRES_USER` | `water_meter` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | `water_meter` | PostgreSQL password |
+| `WATER_METER_NETWORK` | `water-meter_default` | Docker network name used by the stack |
+| `WATER_METER_SUBNET` | `172.28.0.0/16` | Fixed Docker network subnet |
+| `SEED_DEMO_DATA` | `false` | Seed demo data into an empty database on startup |
+| `BACKUP_HOST_DIR` | `/tmp` | Host directory where `deploy.sh backup` writes PostgreSQL dumps |
+| `BACKUP_WAIT_SECONDS` | `30` | Seconds the backup container waits before starting the dump |
 
-```bash
-cd frontend
-npm install
-npm run build
-npm run dev
-```
+### Reader (Camera OCR)
 
-Manual frontend notes:
-- Vite proxies `/api` to `http://localhost:8080`
-- when running from `frontend/`, Vite reads `VITE_API_BASE_URL` from the root `.env`
-- if `VITE_API_BASE_URL` is set, the frontend uses that explicit base URL
-
-Manual reseed:
-
-```bash
-./scripts/seed-db.sh
-```
-
-This truncates and recreates `meter_readings` in the running Docker database.
-
-## Project Cleanup
-
-Clean build artifacts:
-
-```bash
-./scripts/clean.sh
-```
-
-Clean build artifacts and frontend dependencies:
-
-```bash
-./scripts/clean.sh --deps
-```
-
-Cleanup scope:
-- default removes `backend/target` and `frontend/dist`
-- `--deps` additionally removes `frontend/node_modules`
-
-## Development Workflow
-
-Recommended day-to-day workflow:
-
-1. Use the Docker stack for the default ready-to-use setup.
-2. Run `cargo test` in `backend/` when changing analytics or API code.
-3. Run `npm run build` in `frontend/` when changing dashboard code.
-4. Use manual `cargo run` and `npm run dev` only when you need service-level iteration outside Docker.
-
-Validation commands that are useful during development:
-
-```bash
-cd backend
-cargo check
-cargo test
-```
-
-```bash
-cd frontend
-npm run build
-```
-
-```bash
-docker compose -f infra/docker-compose.yml config
-```
-
-## API
-
-Implemented endpoints:
-
-- `GET /api/health`
-- `GET /api/dashboard?tz_offset_minutes=120`
-- `GET /api/readings?from=...&to=...&page=1&page_size=30`
-- `GET /api/anomalies?from=...&to=...`
-- `GET /api/series/cumulative?from=...&to=...`
-- `GET /api/series/consumption?from=...&to=...&bucket=day`
-- `GET /api/alerts?from=...&to=...&tz_offset_minutes=120`
-- `GET /api/openapi.json`
-
-Endpoint intent:
-
-- `/api/health`: simple health check
-- `/api/dashboard`: summary cards and latest reading
-- `/api/readings`: raw cumulative readings for inspection
-- `/api/series/cumulative`: chart series for the raw meter register
-- `/api/series/consumption`: aggregated derived usage for hour/day/week/month
-- `/api/alerts`: anomaly and leak/spike signals for the selected window
-- `/api/openapi.json`: generated API description
+| Variable | Default | Description |
+|---|---|---|
+| `READER_RUNTIME_DIR` | `../reader/runtime` | Host path for current crop and archived reader images |
+| `READER_IMAGE_RETENTION_DAYS` | `30` | Auto-delete archived images older than this many days |
+| `READER_CONTROL_URL` | `http://reader:8090/manual-read` | URL for triggering a manual read on the reader container |
+| `READER_CAMERA_INDEX` | `0` | OpenCV camera index |
+| `READER_VIDEO_DEVICE` | `/dev/video0` | Host video device mapped into the container |
+| `READER_INTERVAL_SECONDS` | `180` | Seconds between capture cycles |
+| `READER_PROCESSED_PICTURES_DIR` | `/data/processed` | Container path for archived processed crop images |
+| `READER_PERSIST_EVERY` | `10` | Save original frame to disk every Nth cycle (1 = every cycle) |
+| `READER_CROP_OUTPUT` | `/data/meter-crop.png` | Container path for the crop file sent to Ollama |
+| `READER_CONTROL_BIND` | `0.0.0.0:8090` | Reader control API bind address inside the container |
+| `READER_CONTROL_PUBLISH` | `192.168.10.134:8090` | Reader control API host address and port published by Docker |
+| `READER_X1`, `READER_Y1` | `159`, `331` | Crop top-left corner coordinates (required) |
+| `READER_X2`, `READER_Y2` | `565`, `414` | Crop bottom-right corner coordinates (required) |
+| `READER_PG_WRITE` | `true` | Write the recognized value into `meter_readings` |
+| `READER_PG_SOURCE` | `reader-docker` | Value written into the `source` column on insert |
+| `READER_PG_ANOMALY_THRESHOLD` | `200` | Skip inserts when the delta exceeds this value (negative deltas are always skipped); anomalies go to `meter_reading_anomalies` |
+| `READER_OCR_APPEND_DIGIT` | `0` | Append this digit before storing the value (use when the physical meter omits the final liter digit) |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API base URL reachable from the reader container |
