@@ -4,6 +4,7 @@ import { formatTimestamp, formatVolume } from "../utils";
 interface AnomaliesTableProps {
   anomalies: AnomalyItem[];
   showArchived: boolean;
+  isBulkArchiving: boolean;
   pendingArchiveAnomalyId: number | null;
   pendingRawReadingAnomalyId: number | null;
   onArchiveAnomaly: (anomaly: AnomalyItem) => void;
@@ -14,6 +15,7 @@ interface AnomaliesTableProps {
 export function AnomaliesTable({
   anomalies,
   showArchived,
+  isBulkArchiving,
   pendingArchiveAnomalyId,
   pendingRawReadingAnomalyId,
   onArchiveAnomaly,
@@ -104,18 +106,26 @@ export function AnomaliesTable({
                           type="button"
                           className="reading-archive-button"
                           onClick={() => onUnarchiveAnomaly(anomaly)}
-                          disabled={pendingArchiveAnomalyId === anomaly.id}
+                          disabled={isBulkArchiving || pendingArchiveAnomalyId === anomaly.id}
                         >
-                          {pendingArchiveAnomalyId === anomaly.id ? "Restoring..." : "Unarchive"}
+                          {isBulkArchiving
+                            ? "Bulk archiving..."
+                            : pendingArchiveAnomalyId === anomaly.id
+                              ? "Restoring..."
+                              : "Unarchive"}
                         </button>
                       ) : (
                         <button
                           type="button"
                           className="reading-archive-button"
                           onClick={() => onArchiveAnomaly(anomaly)}
-                          disabled={pendingArchiveAnomalyId === anomaly.id}
+                          disabled={isBulkArchiving || pendingArchiveAnomalyId === anomaly.id}
                         >
-                          {pendingArchiveAnomalyId === anomaly.id ? "Archiving..." : "Archive"}
+                          {isBulkArchiving
+                            ? "Bulk archiving..."
+                            : pendingArchiveAnomalyId === anomaly.id
+                              ? "Archiving..."
+                              : "Archive"}
                         </button>
                       )}
                     </div>

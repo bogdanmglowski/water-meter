@@ -577,6 +577,47 @@ export default function App() {
     },
   });
 
+  const archiveAllAnomaliesMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      const batchSize = 10;
+      let archivedCount = 0;
+      let failedCount = 0;
+
+      for (let index = 0; index < ids.length; index += batchSize) {
+        const batchIds = ids.slice(index, index + batchSize);
+        const results = await Promise.allSettled(batchIds.map((id) => archiveAnomaly(id)));
+
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            archivedCount += 1;
+          } else {
+            failedCount += 1;
+          }
+        }
+      }
+
+      return { archivedCount, failedCount };
+    },
+    onSuccess: ({ archivedCount, failedCount }) => {
+      if (failedCount === 0) {
+        setArchiveAnomalyError(null);
+        return;
+      }
+
+      setArchiveAnomalyError(
+        `Archived ${archivedCount} anomal${archivedCount === 1 ? "y" : "ies"}, but ${failedCount} request${failedCount === 1 ? "" : "s"} failed.`,
+      );
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+    },
+    onError: (error) => {
+      setArchiveAnomalyError(
+        error instanceof Error ? error.message : "Archive all request failed.",
+      );
+    },
+  });
+
   const addAnomalyToRawReadingsMutation = useMutation({
     mutationFn: (id: number) => addAnomalyToRawReadings(id),
     onSuccess: async () => {
@@ -652,6 +693,9 @@ export default function App() {
     }
     return true;
   });
+  const activeAnomaliesForBulkArchive = (anomaliesQuery.data ?? []).filter(
+    (anomaly) => !anomaly.archived,
+  );
   const totalReadingPages = rawReadingsPage?.totalPages ?? 1;
   const activeReadingsPage = rawReadingsPage?.page ?? readingsPage;
   const totalReadings = rawReadingsPage?.totalCount ?? 0;
@@ -714,6 +758,23 @@ export default function App() {
     }
 
     archiveAnomalyMutation.mutate(anomaly.id);
+  }
+
+  function handleArchiveAllAnomalies() {
+    const activeCount = activeAnomaliesForBulkArchive.length;
+    if (activeCount === 0) {
+      return;
+    }
+
+    const shouldArchiveAll = window.confirm(
+      `Archive all ${activeCount} active anomal${activeCount === 1 ? "y" : "ies"} in the selected range?`,
+    );
+
+    if (!shouldArchiveAll) {
+      return;
+    }
+
+    archiveAllAnomaliesMutation.mutate(activeAnomaliesForBulkArchive.map((anomaly) => anomaly.id));
   }
 
   function handleUnarchiveAnomaly(anomaly: AnomalyItem) {
@@ -1241,6 +1302,27 @@ export default function App() {
                     All
                   </button>
                 </div>
+                <div className="anomaly-bulk-actions">
+                  <button
+                    type="button"
+                    className="reading-archive-button"
+                    onClick={handleArchiveAllAnomalies}
+                    disabled={
+                      anomalyFilter === "archived" ||
+                      activeAnomaliesForBulkArchive.length === 0 ||
+                      archiveAnomalyMutation.isPending ||
+                      unarchiveAnomalyMutation.isPending ||
+                      archiveAllAnomaliesMutation.isPending
+                    }
+                  >
+                    {archiveAllAnomaliesMutation.isPending
+                      ? "Archiving all..."
+                      : `Archive all active (${activeAnomaliesForBulkArchive.length})`}
+                  </button>
+                  <span className="anomaly-action-label">
+                    {activeAnomaliesForBulkArchive.length} active in selected range
+                  </span>
+                </div>
               </div>
 
               <p className="range-meta">
@@ -1259,6 +1341,7 @@ export default function App() {
             <AnomaliesTable
               anomalies={anomalies}
               showArchived={anomalyFilter !== "active"}
+              isBulkArchiving={archiveAllAnomaliesMutation.isPending}
               pendingArchiveAnomalyId={
                 archiveAnomalyMutation.isPending
                   ? (archiveAnomalyMutation.variables ?? null)
