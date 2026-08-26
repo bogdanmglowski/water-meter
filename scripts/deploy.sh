@@ -2,15 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo "$ROOT_DIR"
 COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
 ENV_FILE="${ROOT_DIR}/.env"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/deploy.sh [up|down|restart|logs|ps|config|pull|backup] [--demo] [--reader]
+Usage: ./scripts/deploy.sh [up|start|down|restart|logs|ps|config|pull|backup] [--demo] [--reader]
 
 Commands:
   up       Build and start the deployment stack in the background
+  start    Start the deployment stack without rebuilding images
   down     Stop the deployment stack
   restart  Recreate the deployment stack
   logs     Follow compose logs
@@ -32,7 +34,7 @@ backup_enabled="false"
 
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    up|down|restart|logs|ps|config|pull|backup)
+    up|start|down|restart|logs|ps|config|pull|backup)
       command="$1"
       shift
       ;;
@@ -203,6 +205,10 @@ compose_up() {
   fi
 }
 
+compose_start() {
+  compose up -d --no-build
+}
+
 compose_backup() {
   local started_db_for_backup="false"
   local status=0
@@ -233,6 +239,9 @@ compose_backup() {
 case "$command" in
   up)
     compose_up
+    ;;
+  start)
+    compose_start
     ;;
   down)
     compose down

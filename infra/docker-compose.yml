@@ -103,7 +103,8 @@ services:
     volumes:
       - ../reader/runtime:/data
     devices:
-      - "${READER_VIDEO_DEVICE:-/dev/video0}:${READER_VIDEO_DEVICE:-/dev/video0}"
+      # Keep the container-side device stable; READER_VIDEO_DEVICE is the host path.
+      - "${READER_VIDEO_DEVICE:-/dev/video0}:/dev/video0"
     ports:
       - "${READER_CONTROL_PUBLISH:-127.0.0.1:8090}:8090"
     extra_hosts:
