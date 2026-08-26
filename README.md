@@ -54,7 +54,7 @@ Copy `.env.example` to `.env` and adjust the variables below.
 | `APP_HOST` | `0.0.0.0` | Backend bind address |
 | `APP_PORT` | `8080` | Backend bind port |
 | `CLIENT_HOST` | `192.168.1.34` | Hostname or LAN IP shown in container startup logs |
-| `CLIENT_PORT` | `80` | Published frontend port (e.g. `80`, `5173`) |
+| `CLIENT_PORT` | `88` | Published frontend port (e.g. `88`, `5173`) |
 | `CLIENT_ORIGIN` | `http://192.168.1.34` | Allowed CORS origin for the backend (must match the browser's address exactly) |
 | `API_URL` | `http://192.168.1.34/api/health` | Health check URL logged at startup |
 | `RUST_LOG` | `info,tower_http=info` | Rust backend log level |
