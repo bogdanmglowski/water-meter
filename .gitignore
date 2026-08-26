@@ -11,6 +11,9 @@ Thumbs.db
 .idea/
 *.iml
 
+# VS Code
+.vscode/
+
 # Rust backend
 /backend/target/
 
@@ -30,6 +33,10 @@ Thumbs.db
 /reader/.pytest_cache/
 /reader/pictures/
 /reader/readings.csv
+
+# tests
+/tests/__pycache__/
+/reader/tests/__pycache__/
 
 # other
 scripts/copy-project-to-host.sh
