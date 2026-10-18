@@ -594,6 +594,19 @@ def test_run_ollama_ocr_extracts_first_numeric_value(monkeypatch: pytest.MonkeyP
     assert run_ollama_ocr(crop_path) == 1234567
 
 
+def test_run_ollama_ocr_reports_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    crop_path = tmp_path / "meter-crop.png"
+    crop_path.write_bytes(b"test")
+
+    def fake_urlopen(*args, **kwargs):
+        raise TimeoutError
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="Ollama OCR timed out after 120 seconds"):
+        run_ollama_ocr(crop_path)
+
+
 def test_run_ollama_ocr_reports_missing_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     crop_path = tmp_path / "meter-crop.png"
     crop_path.write_bytes(b"test")

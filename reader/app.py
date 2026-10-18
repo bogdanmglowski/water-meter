@@ -423,9 +423,13 @@ def run_ollama_ocr(crop_output_path: Path) -> int:
     payload = json.dumps(
         {
             "model": "glm-ocr",
-            "prompt": "Text Recognition:",
+            "prompt": "Text Recognition: return only the meter digits.",
             "images": [image_base64],
             "stream": False,
+            "options": {
+                "temperature": 0,
+                "num_predict": 32,
+            },
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -443,6 +447,8 @@ def run_ollama_ocr(crop_output_path: Path) -> int:
         raise RuntimeError(f"Ollama OCR failed: {details or exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach Ollama API at {base_url}: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Ollama OCR timed out after 120 seconds") from exc
 
     try:
         data = json.loads(body)
@@ -606,11 +612,15 @@ def start_control_server(
 
         def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # The client may give up while the OCR request is still running.
+                return
 
     server = ThreadingHTTPServer(bind_address, ReaderControlHandler)
     thread = threading.Thread(target=server.serve_forever, name="reader-control", daemon=True)
