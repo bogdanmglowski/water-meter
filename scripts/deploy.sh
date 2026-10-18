@@ -199,14 +199,36 @@ compose_up() {
     args+=("--force-recreate")
   fi
 
-  if ! compose "${args[@]}"; then
+  if ! compose_with_retries "${args[@]}"; then
     print_failure_diagnostics
     exit 1
   fi
 }
 
+compose_with_retries() {
+  local attempt
+  local max_attempts=5
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if compose "$@"; then
+      return 0
+    fi
+
+    if ((attempt < max_attempts)); then
+      printf '\nDeployment attempt %d/%d failed; retrying in 10 seconds...\n' \
+        "$attempt" "$max_attempts" >&2
+      sleep 10
+    fi
+  done
+
+  return 1
+}
+
 compose_start() {
-  compose up -d --no-build
+  if ! compose_with_retries up -d --no-build; then
+    print_failure_diagnostics
+    exit 1
+  fi
 }
 
 compose_backup() {
