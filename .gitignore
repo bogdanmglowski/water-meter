@@ -31,6 +31,7 @@ Thumbs.db
 # reader
 /reader/__pycache__/
 /reader/.pytest_cache/
+/reader/runtime/
 /reader/pictures/
 /reader/readings.csv
 
@@ -40,4 +41,3 @@ Thumbs.db
 
 # other
 scripts/copy-project-to-host.sh
-
